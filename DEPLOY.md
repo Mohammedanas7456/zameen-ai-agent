@@ -7,7 +7,14 @@ hosting means no CORS and no proxy in front of the stream.
 Cloud Build builds the image from the `Dockerfile`, so Docker is not needed
 locally.
 
-## 1. Project and APIs
+## 1. Account, project, and APIs
+
+If you use gcloud for more than one thing, keep this project in its own named
+configuration so switching back leaves the other setup untouched:
+
+```bash
+gcloud config configurations create zameen && gcloud auth login
+```
 
 ```bash
 gcloud config set project YOUR_PROJECT_ID
@@ -37,7 +44,7 @@ gcloud secrets add-iam-policy-binding vectara-api-key --member="serviceAccount:$
 `asia-south1` (Mumbai) is the closest region to Karachi users.
 
 ```bash
-gcloud run deploy zameen-ai-agent --source . --region asia-south1 --allow-unauthenticated --timeout 3600 --min-instances 1 --set-secrets VECTARA_API_KEY=vectara-api-key:latest --set-env-vars VECTARA_BASE_URL=https://api.vectara.io/v2,VECTARA_CORPUS_KEY=zameen-karachi-properties,VECTARA_AGENT_KEY=zameen_property_assistant
+gcloud run deploy zameen-ai-agent --source . --region asia-south1 --allow-unauthenticated --timeout 3600 --set-secrets VECTARA_API_KEY=vectara-api-key:latest --set-env-vars VECTARA_BASE_URL=https://api.vectara.io/v2,VECTARA_CORPUS_KEY=zameen-karachi-properties,VECTARA_AGENT_KEY=zameen_property_assistant
 ```
 
 Why these flags:
@@ -45,7 +52,7 @@ Why these flags:
 | Flag | Reason |
 |---|---|
 | `--timeout 3600` | Default is 300s. A long agent turn holds the SSE connection open; do not leave this at the default. |
-| `--min-instances 1` | Keeps one warm instance so the first visitor does not wait on a cold start. Costs a few dollars a month — drop it to `0` for a purely idle demo. |
+| no `--min-instances` | Scales to zero, so an idle demo costs nothing. The trade-off is that the first visitor after a quiet period waits on a cold start; add `--min-instances 1` to keep one instance warm for a few dollars a month. |
 | `--allow-unauthenticated` | Public demo. Remove it to require IAM. |
 | no `--port` | Cloud Run injects `PORT=8080` and `config.ts` already reads it. |
 
