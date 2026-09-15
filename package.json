@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Vectara-powered conversational property search over Zameen.com Karachi listings",
+  "license": "MIT",
   "workspaces": ["packages/*", "apps/*"],
   "engines": { "node": ">=20" },
   "scripts": {
