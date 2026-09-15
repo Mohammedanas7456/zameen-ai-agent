@@ -7,6 +7,7 @@ import { config, ROOT } from './config.js';
 import { createSession, searchListings, UpstreamError } from './vectara.js';
 import { handleUserMessage } from './chat.js';
 import type { ClientEvent } from './sse.js';
+import { mountWebClient } from './static.js';
 
 const app = express();
 app.use(cors({ origin: config.corsOrigins }));
@@ -102,6 +103,9 @@ app.post('/api/chat', async (req: Request, res: Response) => {
     res.end();
   }
 });
+
+// Mounted last so it can never shadow an /api route above it.
+mountWebClient(app, join(ROOT, 'apps', 'web', 'dist'));
 
 app.listen(config.port, () => {
   console.log(`API on http://localhost:${config.port}`);
