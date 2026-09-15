@@ -36,6 +36,7 @@ Open <http://localhost:5173>.
 | `apps/web` | React + Tailwind UI: chat pane, filter bar, result grid |
 | `vectara/` | Agent instruction template and the `search_properties` lambda source |
 | `data/` | Scraped snapshot (`listings.json`, `facets.json`) |
+| `Dockerfile` | Multi-stage image serving API + client from one origin |
 
 ## Scripts
 
@@ -47,6 +48,13 @@ Open <http://localhost:5173>.
 | `npm run setup:agent` | Update **only** the agent (fast — skips re-indexing) |
 | `npm run dev` | Run API and UI together |
 | `npm test` | Run the test suite |
+| `npm run build` | Build shared, server, and the client bundle |
+
+## Deploying
+
+The API and the built client ship as a single Cloud Run service, so the
+browser's relative `/api` paths and the SSE chat stream stay same-origin.
+See [DEPLOY.md](DEPLOY.md).
 
 ## How filtering stays exact
 
