@@ -82,3 +82,38 @@ of the image, frontend changes redeploy the service too.
 - `data/facets.json` is baked into the image and read at runtime. Re-run the
   ingest pipeline and redeploy to refresh the snapshot.
 - `CORS_ORIGINS` is unused in this topology; requests are same-origin.
+
+## Deployed instance
+
+| | |
+|---|---|
+| Project | `rayon-gcp-starter` |
+| Service | `zameen-ai-agent` |
+| Region | `asia-south1` |
+| URL | https://zameen-ai-agent-agklzgshpq-el.a.run.app |
+
+Two deviations from the flow above, both forced by holding `roles/editor` rather
+than owner on that project:
+
+**The Vectara key is an env var, not a Secret Manager reference.** `roles/editor`
+can create a secret but can neither read its versions nor grant
+`secretmanager.secretAccessor` to the runtime service account, so `--set-secrets`
+could not work. The key is consequently readable in the service config and
+revision history by anyone with view access on the project. An unused
+`vectara-api-key` secret already exists there; once an owner grants the runtime
+service account access, switch back by redeploying with
+`--set-secrets VECTARA_API_KEY=vectara-api-key:latest` and dropping the key from
+`--set-env-vars`.
+
+**The service is private.** `--allow-unauthenticated` could not be applied because
+`run.services.setIamPolicy` also needs owner. An owner can open it with:
+
+```bash
+gcloud run services add-iam-policy-binding zameen-ai-agent --region=asia-south1 --member=allUsers --role=roles/run.invoker
+```
+
+Until then, reach it with an identity token:
+
+```bash
+curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" https://zameen-ai-agent-agklzgshpq-el.a.run.app/api/health
+```
