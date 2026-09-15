@@ -1,0 +1,15 @@
+.git
+.gitignore
+node_modules
+**/node_modules
+**/dist
+**/tsconfig.tsbuildinfo
+.env
+.env.*
+!.env.example
+data/raw
+*.log
+.claude
+docs
+Dockerfile
+.dockerignore
