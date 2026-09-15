@@ -55,32 +55,3 @@ export type ClientEvent =
   | { type: 'listings'; listings: unknown[]; filter: string }
   | { type: 'done' }
   | { type: 'error'; message: string };
-
-/**
- * Dig the query and metadata filter out of a tool_input payload.
- *
- * The model is instructed to pass `search.corpora[0].metadata_filter`, but a
- * model can always deviate, so this looks for the filter anywhere in the
- * payload rather than trusting one exact path. An empty string means the turn
- * ran unfiltered — worth surfacing, because it is a real failure mode.
- */
-export function describeToolInput(input: unknown): { query: string; filter: string } {
-  let query = '';
-  let filter = '';
-
-  const walk = (node: unknown, depth: number): void => {
-    if (!node || typeof node !== 'object' || depth > 6) return;
-    if (Array.isArray(node)) {
-      for (const item of node) walk(item, depth + 1);
-      return;
-    }
-    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
-      if (key === 'metadata_filter' && typeof value === 'string' && !filter) filter = value;
-      else if (key === 'query' && typeof value === 'string' && !query) query = value;
-      else walk(value, depth + 1);
-    }
-  };
-
-  walk(input, 0);
-  return { query, filter };
-}

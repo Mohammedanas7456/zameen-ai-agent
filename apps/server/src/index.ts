@@ -4,9 +4,9 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Facets, SearchFilters } from '@zameen/shared';
 import { config, ROOT } from './config.js';
-import { createSession, searchListings, streamAgentTurn, UpstreamError } from './vectara.js';
-import { extractListings } from './listings.js';
-import { SseParser, describeToolInput, type ClientEvent } from './sse.js';
+import { createSession, searchListings, UpstreamError } from './vectara.js';
+import { handleUserMessage } from './chat.js';
+import type { ClientEvent } from './sse.js';
 
 const app = express();
 app.use(cors({ origin: config.corsOrigins }));
@@ -59,11 +59,10 @@ app.post('/api/search', async (req: Request, res: Response) => {
 });
 
 /**
- * One conversation turn, streamed.
+ * One user message, streamed.
  *
- * Vectara's SSE is translated into a smaller UI-shaped stream: prose tokens for
- * the chat, and a `listings` event carrying the structured results so the
- * result grid and sidebar update from the same search the agent just ran.
+ * A search runs as two agent turns with our own exact query in between; see
+ * `handleUserMessage`.
  */
 app.post('/api/chat', async (req: Request, res: Response) => {
   const { sessionKey, message } = req.body as { sessionKey?: string; message?: string };
@@ -84,79 +83,18 @@ app.post('/api/chat', async (req: Request, res: Response) => {
     res.write(`data: ${JSON.stringify(event)}\n\n`);
   };
 
+  // If the client navigates away, stop doing work on its behalf.
+  //
+  // This must be `res`, not `req`: the request stream emits 'close' as soon as
+  // its body has been read, which is immediately — watching `req` aborts every
+  // turn before it starts.
+  let aborted = false;
+  res.on('close', () => {
+    aborted = true;
+  });
+
   try {
-    const agentRes = await streamAgentTurn(sessionKey, message);
-    const reader = agentRes.body!.getReader();
-    const decoder = new TextDecoder();
-    const parser = new SseParser();
-    let lastFilter = '';
-    let sawOutput = false;
-
-    // If the client navigates away, stop pulling from Vectara.
-    let aborted = false;
-    req.on('close', () => {
-      aborted = true;
-      void reader.cancel().catch(() => {});
-    });
-
-    while (!aborted) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      for (const sse of parser.push(decoder.decode(value, { stream: true }))) {
-        let event: Record<string, unknown>;
-        try {
-          event = JSON.parse(sse.data) as Record<string, unknown>;
-        } catch {
-          continue; // keep-alives and non-JSON frames
-        }
-
-        switch (event['type']) {
-          case 'streaming_agent_output': {
-            const text = typeof event['content'] === 'string' ? event['content'] : '';
-            if (text) {
-              sawOutput = true;
-              send({ type: 'token', text });
-            }
-            break;
-          }
-          case 'agent_output': {
-            // Non-streamed fallback: only use it if nothing streamed, or the
-            // whole reply would be duplicated.
-            const text = typeof event['content'] === 'string' ? event['content'] : '';
-            if (text && !sawOutput) {
-              sawOutput = true;
-              send({ type: 'token', text });
-            }
-            break;
-          }
-          case 'thinking': {
-            const text = typeof event['content'] === 'string' ? event['content'] : '';
-            if (text) send({ type: 'thinking', text: text.slice(0, 200) });
-            break;
-          }
-          case 'tool_input': {
-            const { query, filter } = describeToolInput(event['tool_input']);
-            lastFilter = filter;
-            send({
-              type: 'tool_start',
-              tool: String(event['tool_configuration_name'] ?? 'search_properties'),
-              query,
-              filter,
-            });
-            break;
-          }
-          case 'tool_output': {
-            const listings = extractListings(event['tool_output']);
-            if (listings.length > 0) send({ type: 'listings', listings, filter: lastFilter });
-            break;
-          }
-          default:
-            break;
-        }
-      }
-    }
-
+    await handleUserMessage(sessionKey, message, send, () => aborted);
     send({ type: 'done' });
   } catch (err) {
     send({ type: 'error', message: (err as Error).message });

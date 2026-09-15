@@ -7,10 +7,12 @@ The assistant asks which area you want, whether you're renting or buying, and wh
 ```
 React + Vite  ──SSE──►  Node + Express  ──────►  Vectara Agent
 (chat + filters)        (holds the API key)      │
-                                                 ├─ tool: search_properties (corpora_search)
-                                                 └─ corpus: 400 Karachi listings
-     ▲                                                     ▲
-     └──────── scrape → normalize → index ─────────────────┘
+                             │                   └─ tool: search_properties (lambda)
+                             │                          captures structured criteria
+                             ▼
+                        exact metadata filter ──► corpus: 400 Karachi listings
+                             │
+                             └─ listings fed back to the agent to describe
 ```
 
 ## Quick start
@@ -32,7 +34,7 @@ Open <http://localhost:5173>.
 | `packages/ingest` | Scraper, normalizer, and the Vectara provisioning script |
 | `apps/server` | Express API: session, SSE chat proxy, deterministic search, facets |
 | `apps/web` | React + Tailwind UI: chat pane, filter bar, result grid |
-| `vectara/` | The agent's instruction template |
+| `vectara/` | Agent instruction template and the `search_properties` lambda source |
 | `data/` | Scraped snapshot (`listings.json`, `facets.json`) |
 
 ## Scripts
@@ -48,12 +50,20 @@ Open <http://localhost:5173>.
 
 ## How filtering stays exact
 
-Two search paths share one filter builder, so both enforce constraints precisely:
+Both search paths run through the same `buildMetadataFilter`, in TypeScript, so neither depends on the model getting filter syntax right:
 
-- **Sidebar** → `POST /api/search` builds the metadata filter in TypeScript and queries the corpus directly. No LLM, no drift.
-- **Chat** → the agent writes its own `metadata_filter` and Vectara enforces it. The filter it used is streamed to the browser, shown under the "Searching…" chip, and parsed back to sync the sidebar — so the panel always shows what was actually searched.
+- **Sidebar** → `POST /api/search` builds the filter and queries the corpus directly. No LLM in the path.
+- **Chat** → the agent calls the `search_properties` tool with *structured arguments* (`purpose`, `area`, `min_bedrooms`, …). The server validates them, builds the same filter, runs the query, and hands the results back to the agent to describe.
 
-Every filterable attribute has a lowercase `*_norm` twin (`area_l3_norm`, `property_type_norm`) so a casing mistake by the model can't silently return zero results.
+A chat search therefore runs as two agent turns with our own exact query in between. The agent never sees unfiltered data and only ever describes listings that genuinely matched.
+
+### Why not let the agent write the filter?
+
+The built-in `corpora_search` tool does expose `metadata_filter` in its schema, but the surrounding `search` object is not model-fillable — across two experiments the model only ever emitted `query`, even when the tool returned `corpora should have at least 1 items` 17 times in a row. Its `corpora` array can only be set via `argument_override`, and setting that satisfies the schema's required `search` property, at which point the model stops sending one at all and searches run **silently unfiltered**.
+
+A lambda tool's input schema is generated from its Python signature and is therefore flat, which the model fills reliably. The lambda itself cannot search — the sandbox has no network access and cannot invoke other tools — so it validates the criteria and the server does the query.
+
+Every filterable attribute also has a lowercase `*_norm` twin (`area_l3_norm`, `property_type_norm`) so a casing mistake can't silently return zero results.
 
 ## Data notes
 

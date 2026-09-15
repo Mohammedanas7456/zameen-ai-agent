@@ -2,10 +2,12 @@
  * Provision everything this app needs in Vectara, idempotently:
  *   1. the corpus (with its filter-attribute schema)
  *   2. the 400 listing documents
- *   3. the agent, wired to a corpus-search tool pinned to that corpus
+ *   3. the `search_properties` lambda tool
+ *   4. the agent, wired to that tool
  *
  * Safe to re-run: the corpus is reused if it exists, documents are replaced,
- * and the agent is updated in place.
+ * and the tool and agent are recreated (the agent is torn down first, since an
+ * agent referencing a tool blocks that tool's deletion).
  */
 import { config as loadEnv } from 'dotenv';
 import { readFile } from 'node:fs/promises';
@@ -23,8 +25,8 @@ loadEnv({ path: join(ROOT, '.env') });
 
 const CORPUS_KEY = process.env['VECTARA_CORPUS_KEY'] ?? 'zameen-karachi-properties';
 const AGENT_KEY = process.env['VECTARA_AGENT_KEY'] ?? 'zameen_property_assistant';
-const SEARCH_TOOL_ID = 'tol_vectara_corpora_search_20260608';
 const AGENT_MODEL = process.env['VECTARA_AGENT_MODEL'] ?? 'gpt-5.5';
+const SEARCH_TOOL_NAME = 'search_properties';
 
 async function readJson<T>(name: string): Promise<T> {
   const file = join(ROOT, 'data', name);
@@ -36,7 +38,7 @@ async function readJson<T>(name: string): Promise<T> {
 }
 
 async function ensureCorpus(client: VectaraClient): Promise<void> {
-  console.log(`\n[1/3] Corpus "${CORPUS_KEY}"`);
+  console.log(`\n[1/4] Corpus "${CORPUS_KEY}"`);
   const { status } = await client.request(
     'POST',
     '/corpora',
@@ -71,7 +73,7 @@ async function pool<T>(items: T[], size: number, worker: (item: T) => Promise<vo
 }
 
 async function indexListings(client: VectaraClient, listings: Listing[]): Promise<void> {
-  console.log(`\n[2/3] Indexing ${listings.length} listings`);
+  console.log(`\n[2/4] Indexing ${listings.length} listings`);
   let indexed = 0;
   let replaced = 0;
   const failures: string[] = [];
@@ -124,8 +126,83 @@ function renderAreaList(facets: Facets): string {
     .join('\n');
 }
 
-async function ensureAgent(client: VectaraClient, listings: Listing[], facets: Facets): Promise<void> {
-  console.log(`\n[3/3] Agent "${AGENT_KEY}"`);
+interface ToolSummary {
+  id: string;
+  name?: string;
+}
+
+/**
+ * Create (or replace) the agent's search tool.
+ *
+ * It is a lambda because a lambda's input schema is generated from its Python
+ * signature and is therefore flat — which is the part a model can actually
+ * fill. The built-in corpora_search tool takes a nested `search` object that
+ * the model never emits, and whose `corpora` array can only be set through
+ * `argument_override`, making a per-call metadata filter impossible.
+ *
+ * The lambda only validates criteria; the server performs the real search.
+ */
+async function ensureSearchTool(client: VectaraClient): Promise<string> {
+  console.log(`\n[3/4] Tool "${SEARCH_TOOL_NAME}"`);
+  const code = await readFile(join(ROOT, 'vectara', 'search_properties.py'), 'utf8');
+
+  // Tools are immutable in the ways that matter here, so replace rather than
+  // patch. An agent still referencing the old tool blocks its deletion, which
+  // is why the agent is (re)created after this step.
+  //
+  // The listing must be paged through: the account has several hundred built-in
+  // tools, so a single page never reaches our own.
+  let pageKey: string | undefined;
+  let deleted = 0;
+  do {
+    const query = new URLSearchParams({ limit: '100', ...(pageKey ? { page_key: pageKey } : {}) });
+    const { data } = await client.request<{
+      tools?: ToolSummary[];
+      metadata?: { page_key?: string };
+    }>('GET', `/tools?${query}`);
+
+    for (const tool of data.tools ?? []) {
+      if (tool.name === SEARCH_TOOL_NAME) {
+        await client.request('DELETE', `/tools/${tool.id}`, undefined, {
+          allowStatuses: [400, 404, 409],
+        });
+        deleted++;
+      }
+    }
+    pageKey = data.metadata?.page_key || undefined;
+  } while (pageKey);
+
+  if (deleted > 0) console.log(`      removed ${deleted} previous version(s)`);
+
+  const created = await client.request<{ id?: string; function_definition?: { validation_status?: string } }>(
+    'POST',
+    '/tools',
+    {
+      type: 'lambda',
+      language: 'python',
+      name: SEARCH_TOOL_NAME,
+      title: 'Search Karachi Properties',
+      description:
+        'Search Karachi property listings by structured criteria (purpose, area, bedrooms, ' +
+        'price, property type, floor). Returns the normalised criteria; the matching listings ' +
+        'are delivered in the following message.',
+      code,
+    },
+  );
+
+  const id = created.data.id;
+  if (!id) throw new Error('Tool creation returned no id');
+  console.log(`      created ${id} (${created.data.function_definition?.validation_status ?? 'unknown'})`);
+  return id;
+}
+
+async function ensureAgent(
+  client: VectaraClient,
+  listings: Listing[],
+  facets: Facets,
+  searchToolId: string,
+): Promise<void> {
+  console.log(`\n[4/4] Agent "${AGENT_KEY}"`);
 
   const template = await readFile(join(ROOT, 'vectara', 'agent-instructions.md'), 'utf8');
   const instructions = template
@@ -158,12 +235,9 @@ async function ensureAgent(client: VectaraClient, listings: Listing[], facets: F
       },
     },
     tool_configurations: {
-      // No `search` override: overriding it satisfies the schema's required
-      // property, so the model stops emitting one and the metadata_filter is
-      // never applied. The corpus key is pinned in the instructions instead.
-      search_properties: {
-        type: 'dynamic_vectara',
-        tool_id: SEARCH_TOOL_ID,
+      [SEARCH_TOOL_NAME]: {
+        type: 'lambda',
+        tool_id: searchToolId,
       },
     },
   };
@@ -189,9 +263,13 @@ async function main() {
   const facets = await readJson<Facets>('facets.json');
 
   if (!agentOnly) await ensureCorpus(client);
-  if (skipIndex) console.log('\n[2/3] Indexing skipped (--skip-index)');
+  if (skipIndex) console.log('\n[2/4] Indexing skipped (--skip-index)');
   else await indexListings(client, listings);
-  await ensureAgent(client, listings, facets);
+  // The agent must be deleted before its tool can be replaced, then recreated
+  // pointing at the new tool id.
+  await client.request('DELETE', `/agents/${AGENT_KEY}`, undefined, { allowStatuses: [404] });
+  const searchToolId = await ensureSearchTool(client);
+  await ensureAgent(client, listings, facets, searchToolId);
 
   console.log(`\nDone.\n  corpus: ${CORPUS_KEY}\n  agent:  ${AGENT_KEY}`);
 }

@@ -4,6 +4,7 @@ import { ChatPanel, type ChatMessage } from './components/ChatPanel.js';
 import { FilterBar } from './components/FilterBar.js';
 import { ResultsGrid } from './components/ResultsGrid.js';
 import { createSession, getFacets, searchListings, streamChat } from './lib/api.js';
+import { canonicalArea, filtersFromExpression } from './lib/filters.js';
 
 const GREETING: ChatMessage = {
   id: 'greeting',
@@ -11,48 +12,6 @@ const GREETING: ChatMessage = {
   content:
     "Hello! I can help you find a property in Karachi.\nWhich **area or town** are you looking in?",
 };
-
-/**
- * Translate the metadata filter the agent wrote back into sidebar state, so the
- * panel reflects what was actually searched.
- *
- * This reads the filter the agent emitted rather than guessing from its prose —
- * if the two ever disagree, the sidebar shows the truth.
- */
-function filtersFromExpression(expression: string): SearchFilters {
-  const filters: SearchFilters = {};
-  if (!expression) return filters;
-
-  const purpose = expression.match(/doc\.purpose\s*=\s*'(rent|buy)'/);
-  if (purpose?.[1]) filters.purpose = purpose[1] as SearchFilters['purpose'];
-
-  // Any of the three area levels; they all carry the same value.
-  const area = expression.match(/doc\.area_l[345]_norm\s*=\s*'([^']+)'/);
-  if (area?.[1]) filters.area = area[1];
-
-  const type = expression.match(/doc\.property_type_norm\s*=\s*'([^']+)'/);
-  if (type?.[1]) filters.propertyType = type[1];
-
-  const minBeds = expression.match(/doc\.bedrooms\s*>=?\s*(\d+)/);
-  if (minBeds?.[1]) filters.minBedrooms = Number.parseInt(minBeds[1], 10);
-
-  const maxPrice = expression.match(/doc\.price_pkr\s*<=?\s*(\d+)/);
-  if (maxPrice?.[1]) filters.maxPrice = Number.parseInt(maxPrice[1], 10);
-
-  const minPrice = expression.match(/doc\.price_pkr\s*>=?\s*(\d+)/);
-  if (minPrice?.[1]) filters.minPrice = Number.parseInt(minPrice[1], 10);
-
-  const floor = expression.match(/doc\.floor\s*=\s*'(ground|lower|upper|top|numbered)'/);
-  if (floor?.[1]) filters.floor = floor[1] as SearchFilters['floor'];
-
-  return filters;
-}
-
-/** Match the sidebar's stored area label back to the agent's lowercase value. */
-function titleCaseArea(value: string, facets: Facets | null): string {
-  const match = facets?.areas.find((a) => a.name.toLowerCase() === value.toLowerCase());
-  return match?.name ?? value;
-}
 
 export default function App() {
   const [facets, setFacets] = useState<Facets | null>(null);
@@ -170,7 +129,7 @@ export default function App() {
 
   // The agent writes areas lowercase; show the canonical casing in the sidebar.
   const displayFilters: SearchFilters = filters.area
-    ? { ...filters, area: titleCaseArea(filters.area, facets) }
+    ? { ...filters, area: canonicalArea(filters.area, facets) }
     : filters;
 
   return (

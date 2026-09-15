@@ -18,11 +18,15 @@ A conversational property-search agent over Zameen.com Karachi listings, built o
 ## Architecture
 
 ```
-React/Vite  ──SSE──►  Express  ──────►  Vectara Agent (gpt-5.5)
-                      (API key)         ├─ search_properties → corpora_search
-                                        └─ corpus: zameen-karachi-properties
-     ▲                                             ▲
-     └──── scrape → normalize → index ─────────────┘
+React/Vite  ──SSE──►  Express  ──────────►  Vectara Agent (gpt-5.5)
+                      (API key)  │            └─ search_properties (lambda)
+                                 │                 captures structured criteria
+                                 ▼
+                     exact metadata filter ──►  corpus: zameen-karachi-properties
+                                 │
+                                 └─ listings returned to the agent to describe
+     ▲
+     └──── scrape → normalize → index
 ```
 
 The API key lives only in the server and the ingest scripts.
@@ -51,33 +55,37 @@ Together these cover **~20%** of listings; the rest are `unknown`. The UI labels
 - **Sentinels:** filter attributes cannot be null, so floor uses `'unknown'` and `floor_num` uses `-1`.
 - **Lowercase twins** (`area_l3_norm`, `property_type_norm`) exist so a casing mistake by the model cannot silently return nothing.
 
-## Two spikes that changed the design
+## Four experiments that determined the design
 
-The approved design routed search through a **Vectara lambda tool** that would build the filter and call the corpus. Both mechanisms it needed turned out to be unavailable on this account:
+The approved design routed search through a **Vectara lambda tool** that would build the filter and call the corpus. Getting to something that actually works took four experiments:
 
-1. **Lambda → other tools.** A lambda declaring `tool_configurations` and calling `tool.corpora_search(...)` fails at runtime with *"tool invocation is not available in this sandbox: no owner callback environment was injected"* — both in `POST /v2/tools/{id}/test` and inside a real agent session.
-2. **Lambda → network.** An outbound HTTPS call from the sandbox hangs to the 30s execution timeout, and `requests` is not installed. So the lambda cannot reach the Query API either.
+1. **Lambda → other tools: unavailable.** A lambda declaring `tool_configurations` and calling `tool.corpora_search(...)` fails with *"tool invocation is not available in this sandbox: no owner callback environment was injected"* — both in `POST /v2/tools/{id}/test` and inside a real agent session.
+2. **Lambda → network: unavailable.** An outbound HTTPS call hangs to the 30s execution timeout, and `requests` is not installed. The lambda cannot reach the Query API either.
+3. **Built-in `corpora_search_20260608`: filter not model-fillable.** Its schema does expose `search.corpora[].metadata_filter`, so this looked like the answer. It is not. With `argument_override.search` set, the override satisfies the schema's required `search` property and the model stops emitting one — it wrote its filter into `query` as prose and searches ran **silently unfiltered**. With the override removed, calls fail: `Field 'arg.corpora': corpora should have at least 1 items`. Across 17 consecutive retries showing it that exact error, the model never once added `corpora`. Only `query` is model-fillable; `search` can come only from `argument_override`.
+4. **Lambda with a flat signature: works.** A lambda's input schema is generated from its Python signature, so it is flat — and the model fills it precisely: `{"purpose":"rent","area":"DHA Phase 6","min_bedrooms":3,"max_price":300000}`.
 
-**Resolution:** attach the system tool `tol_vectara_corpora_search_20260608` directly. Unlike the older `corpora_search`, its input schema exposes `search.corpora[].metadata_filter` to the model, so dynamic filters are natively supported — which is what the lambda was going to provide anyway, with one less moving part.
+**Resolution:** the agent calls a flat-signature lambda that validates criteria but does not search. The server observes the `tool_input` event, builds the exact filter with the same `buildMetadataFilter` the sidebar uses, runs the query, and feeds the listings back on a second agent turn for narration.
 
-### A second bug this surfaced
-
-Pinning `corpus_key` through `argument_override.search` **satisfied the schema's required `search` property**, so the model stopped emitting one and wrote its filter into the `query` string as prose instead — searches silently ran unfiltered.
-
-Fix: no `search` override at all. The corpus key is pinned in the instructions, which spell out the exact call shape and state that a call without `search` is wrong.
+This costs two agent turns per search and buys two things: filters enforced by our code rather than by a model, and an agent that can only ever describe listings that really matched.
 
 ## Filter enforcement
 
-Two paths share `buildMetadataFilter`:
+Both paths share `buildMetadataFilter`:
 
-- **Sidebar** → `POST /api/search` builds the filter in TypeScript and queries the corpus directly. No LLM.
-- **Chat** → the agent writes the filter; Vectara enforces it. The emitted filter is streamed to the browser, shown under the activity chip, and parsed back into sidebar state so the panel reflects what was actually searched.
+- **Sidebar** → `POST /api/search` builds the filter and queries the corpus directly. No LLM.
+- **Chat** → the agent supplies structured criteria; `criteriaToFilters` re-validates them (rejecting unknown purposes and floors, treating 0 as unset, repairing inverted ranges) and the same builder produces the filter.
+
+The generated filter is streamed to the browser and shown under the activity chip, and parsed back into sidebar state so the panel reflects what was actually searched.
 
 Values are escaped before interpolation — they originate from a model or a user, so a crafted area name must not become filter syntax.
 
+### Node gotcha worth remembering
+
+`req.on('close')` fires when the **request body** finishes being read, not when the client disconnects. Using it to detect abort killed every streaming turn before its first iteration. The disconnect signal is `res.on('close')`.
+
 ## Testing
 
-Vitest, unit-level, over the pieces that can silently produce wrong results: `window.state` extraction (against a fixture carrying a decoy brace and a `</script>`-like string), floor parsing, the metadata-filter builder including injection and `NaN` cases, listing reconstruction from metadata, and incremental SSE parsing.
+105 Vitest unit tests over the pieces that can silently produce wrong results: `window.state` extraction (against a fixture carrying a decoy brace and a `</script>`-like string), floor parsing, the metadata-filter builder including injection and `NaN` cases, the agent-criteria validator, listing reconstruction from metadata, incremental SSE parsing, and a round-trip test asserting that anything `buildMetadataFilter` emits parses back to the same filters (which is what keeps the sidebar honest).
 
 ## Known limits
 
