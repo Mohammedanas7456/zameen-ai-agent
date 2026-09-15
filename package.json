@@ -1,0 +1,30 @@
+{
+  "name": "zameen-ai-agent",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Vectara-powered conversational property search over Zameen.com Karachi listings",
+  "workspaces": ["packages/*", "apps/*"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "scrape": "npm run -w @zameen/ingest scrape",
+    "normalize": "npm run -w @zameen/ingest normalize",
+    "setup:vectara": "npm run -w @zameen/ingest setup",
+    "setup:agent": "npm run -w @zameen/ingest setup -- --agent-only",
+    "bootstrap": "npm run scrape && npm run normalize && npm run setup:vectara",
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm run -w @zameen/server dev\" \"npm run -w @zameen/web dev\"",
+    "dev:server": "npm run -w @zameen/server dev",
+    "dev:web": "npm run -w @zameen/web dev",
+    "build": "npm run -w @zameen/shared build && npm run -w @zameen/server build && npm run -w @zameen/web build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b --pretty"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "concurrently": "^9.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+.env
+.env.*
+!.env.example
+data/raw/
+*.log
+.DS_Store
+.vectara-state.json
+coverage/

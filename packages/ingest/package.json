@@ -1,0 +1,12 @@
+{
+  "name": "@zameen/ingest",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "scrape": "tsx src/scrape.ts",
+    "normalize": "tsx src/normalize.ts",
+    "setup": "tsx src/setup-vectara.ts"
+  },
+  "dependencies": { "@zameen/shared": "*", "dotenv": "^16.4.7" }
+}

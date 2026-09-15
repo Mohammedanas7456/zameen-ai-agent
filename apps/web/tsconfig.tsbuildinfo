@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/components/ChatPanel.tsx","./src/components/FilterBar.tsx","./src/components/PropertyCard.tsx","./src/components/ResultsGrid.tsx","./src/lib/api.ts","./src/lib/format.ts"],"version":"5.9.3"}
