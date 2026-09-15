@@ -5,14 +5,20 @@ FROM node:20-slim AS builder
 WORKDIR /app
 
 # Manifests first, so the dependency layer caches independently of source edits.
-# --ignore-scripts because @zameen/shared's prepare script compiles src/, which
-# has not been copied yet; the explicit build below covers it.
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/ingest/package.json packages/ingest/
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
-RUN npm ci --ignore-scripts
+
+# @zameen/shared's prepare script compiles src/ during the install, and npm runs
+# prepare for linked workspaces even under --ignore-scripts. Its sources must
+# therefore exist before `npm ci`, not after. The package is small and changes
+# rarely, so copying it early costs little cache.
+COPY packages/shared/tsconfig.json packages/shared/
+COPY packages/shared/src packages/shared/src
+
+RUN npm ci
 
 COPY . .
 # Builds shared, then the server, then the web client into apps/web/dist.
