@@ -11,6 +11,14 @@ export const BUYER_SCOPES = ['openid', 'email', 'profile'];
 export const AGENT_SCOPES = [
   'openid',
   'email',
+  // Both are needed, and neither implies the other. Google's own discovery
+  // document lists `calendar.events` for events.insert but NOT for
+  // freebusy.query, which accepts only calendar, calendar.freebusy,
+  // calendar.events.freebusy or calendar.readonly. Requesting events alone
+  // mints a token that can create the booking but cannot check whether the
+  // slot is free — a 403 insufficientPermissions that no mocked test can
+  // catch, because it only appears against a real Google token.
+  'https://www.googleapis.com/auth/calendar.freebusy',
   'https://www.googleapis.com/auth/calendar.events',
 ];
 

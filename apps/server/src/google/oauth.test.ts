@@ -58,6 +58,22 @@ describe('authUrl', () => {
     expect(url.searchParams.get('prompt')).toBe('consent');
     expect(url.searchParams.get('scope')).toContain('https://www.googleapis.com/auth/calendar.events');
   });
+
+  it('requests free/busy read access as well as events, which events alone does not grant', () => {
+    // Verified against Google's discovery document: freebusy.query accepts
+    // calendar, calendar.freebusy, calendar.events.freebusy or
+    // calendar.readonly — never calendar.events. A token holding only
+    // calendar.events can create the booking but gets 403
+    // insufficientPermissions when checking whether the slot is free.
+    const url = new URL(authUrl({ clientId: 'c', redirectUri: 'r', scopes: AGENT_SCOPES, state: 's', offline: true }));
+    const scope = url.searchParams.get('scope') ?? '';
+    expect(scope).toContain('https://www.googleapis.com/auth/calendar.freebusy');
+    expect(scope).toContain('https://www.googleapis.com/auth/calendar.events');
+  });
+
+  it('keeps the buyer flow free of any calendar scope, so buyers meet no unverified-app warning', () => {
+    expect(BUYER_SCOPES.some((s) => s.includes('calendar'))).toBe(false);
+  });
 });
 
 describe('exchangeCode', () => {

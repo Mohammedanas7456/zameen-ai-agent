@@ -63,7 +63,13 @@ Viewing bookings need their own OAuth client in the same project, alongside the 
 1. Enable the **Google Calendar API** (`gcloud services enable calendar-json.googleapis.com`, or via the console).
 2. Create an OAuth client, type **Web application**.
 3. Add authorised redirect URIs: `http://localhost:5858/callback` (`connect:calendar`, run locally), `http://localhost:5173/api/auth/google/callback` (buyer sign-in in local dev), and `<PUBLIC_BASE_URL>/api/auth/google/callback` (buyer sign-in in production).
-4. On the OAuth consent screen, add the `.../auth/calendar.events` scope and add yourself as a test user. Leaving the screen in Testing status is fine for a demo project; the trade-off is a refresh token that expires after 7 days instead of running indefinitely.
+4. On the OAuth consent screen, add **both** the `.../auth/calendar.freebusy` and
+   `.../auth/calendar.events` scopes, and add yourself as a test user. Both are
+   required and neither implies the other: `calendar.events` creates the booking,
+   but Google's `freebusy.query` does not accept it, so a token without
+   `calendar.freebusy` fails with `403 insufficientPermissions` the moment the
+   app checks whether a slot is free. (`calendar.readonly` also works in place of
+   `calendar.freebusy`, but grants more than this app needs.) Leaving the screen in Testing status is fine for a demo project; the trade-off is a refresh token that expires after 7 days instead of running indefinitely.
 5. Run `npm run connect:calendar` **locally** to mint the refresh token — it opens a browser consent flow against `localhost:5858`, which only a developer's machine can complete. It must never run against the deployed service; see the warning below.
 
 Carry the results into the deploy command from step 3 by extending its `--set-env-vars` list — `gcloud run deploy` replaces the whole list on every call, so add these alongside the existing ones rather than passing a second `--set-env-vars` flag:
