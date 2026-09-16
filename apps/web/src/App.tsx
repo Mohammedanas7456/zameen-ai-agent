@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Facets, Listing, SearchFilters } from '@zameen/shared';
+import { AccountChip } from './components/AccountChip.js';
 import { ChatPanel, type ChatMessage } from './components/ChatPanel.js';
 import { FilterBar } from './components/FilterBar.js';
 import { ResultsGrid } from './components/ResultsGrid.js';
 import { createSession, getFacets, searchListings, streamChat } from './lib/api.js';
+import { getMe, signOut, type Me } from './lib/booking.js';
 import { canonicalArea, filtersFromExpression } from './lib/filters.js';
 
 const GREETING: ChatMessage = {
@@ -23,6 +25,7 @@ export default function App() {
   const [searchBusy, setSearchBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<'idle' | 'agent' | 'filters'>('idle');
+  const [me, setMe] = useState<Me | null>(null);
 
   // Guards a filter-driven search from racing an in-flight agent turn.
   const searchToken = useRef(0);
@@ -32,6 +35,7 @@ export default function App() {
     createSession()
       .then((r) => setSessionKey(r.sessionKey))
       .catch((e: Error) => setError(`Could not connect to the assistant: ${e.message}`));
+    getMe().then(setMe).catch(() => setMe({ buyer: null, bookingEnabled: false }));
   }, []);
 
   /** Sidebar-driven search: deterministic, no LLM. */
@@ -69,6 +73,11 @@ export default function App() {
     setFilters({});
     setListings([]);
     setSource('idle');
+  }, []);
+
+  const handleSignOut = useCallback(async () => {
+    await signOut().catch(() => {});
+    setMe((prev) => (prev ? { ...prev, buyer: null } : prev));
   }, []);
 
   const handleSend = useCallback(
@@ -163,6 +172,7 @@ export default function App() {
             ))}
           </div>
         )}
+        <AccountChip me={me} onSignOut={handleSignOut} />
       </header>
 
       <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
