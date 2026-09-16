@@ -1,18 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  /** Set while the assistant is mid-search, to show what it is doing. */
-  activity?: { query: string; filter: string } | null;
-  streaming?: boolean;
-}
+import { canStartNewChat, type ChatMessage } from '../lib/chat-session.js';
 
 interface Props {
   messages: ChatMessage[];
   onSend: (text: string) => void;
+  /** Clear the transcript and talk to a fresh agent session. */
+  onNewChat: () => void;
   busy: boolean;
+  /** A replacement session is being minted. */
+  startingChat: boolean;
   error: string | null;
 }
 
@@ -91,7 +87,7 @@ function ActivityChip({ query, filter }: { query: string; filter: string }) {
   );
 }
 
-export function ChatPanel({ messages, onSend, busy, error }: Props) {
+export function ChatPanel({ messages, onSend, onNewChat, busy, startingChat, error }: Props) {
   const [draft, setDraft] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -106,8 +102,54 @@ export function ChatPanel({ messages, onSend, busy, error }: Props) {
     setDraft('');
   };
 
+  const canReset = canStartNewChat({
+    messageCount: messages.length,
+    chatBusy: busy,
+    starting: startingChat,
+  });
+
+  // Say why the button is off rather than leaving a dead control unexplained.
+  const resetHint = busy
+    ? 'Wait for the reply to finish'
+    : messages.length <= 1
+      ? 'This chat is already new'
+      : 'Clear this conversation and start a new session';
+
+  const startNewChat = () => {
+    if (!canReset) return;
+    // Drop a half-typed message rather than carrying it into the new session.
+    setDraft('');
+    onNewChat();
+  };
+
   return (
     <div className="flex h-full flex-col" style={{ background: 'var(--panel)' }}>
+      <div
+        className="flex items-center gap-2 border-b px-4 py-2"
+        style={{ borderColor: 'var(--border)' }}
+      >
+        <h2
+          className="flex-1 text-[11px] font-semibold uppercase tracking-wide"
+          style={{ color: 'var(--muted)' }}
+        >
+          Chat
+        </h2>
+        <button
+          type="button"
+          onClick={startNewChat}
+          disabled={!canReset}
+          title={resetHint}
+          aria-label="Start a new chat"
+          className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition
+                     hover:border-brand-500 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-40
+                     dark:hover:text-brand-300"
+          style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}
+        >
+          <span aria-hidden="true">{startingChat ? '\u2026' : '\u21ba'}</span>
+          New chat
+        </button>
+      </div>
+
       <div className="scroll-slim flex-1 space-y-3 overflow-y-auto p-4">
         {messages.map((m) => {
           if (m.role === 'system') {

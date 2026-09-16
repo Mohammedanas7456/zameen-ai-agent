@@ -2,19 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Booking, Facets, Listing, SearchFilters } from '@zameen/shared';
 import { AccountChip } from './components/AccountChip.js';
 import { BookingModal } from './components/BookingModal.js';
-import { ChatPanel, type ChatMessage } from './components/ChatPanel.js';
+import { ChatPanel } from './components/ChatPanel.js';
 import { FilterBar } from './components/FilterBar.js';
 import { ResultsGrid } from './components/ResultsGrid.js';
 import { createSession, getFacets, searchListings, streamChat } from './lib/api.js';
 import { getMe, signOut, slotRangeLabel, type Me } from './lib/booking.js';
+import { GREETING, type ChatMessage } from './lib/chat-session.js';
 import { canonicalArea, filtersFromExpression } from './lib/filters.js';
-
-const GREETING: ChatMessage = {
-  id: 'greeting',
-  role: 'assistant',
-  content:
-    "Hello! I can help you find a property in Karachi.\nWhich **area or town** are you looking in?",
-};
 
 export default function App() {
   const [facets, setFacets] = useState<Facets | null>(null);
@@ -28,17 +22,51 @@ export default function App() {
   const [source, setSource] = useState<'idle' | 'agent' | 'filters'>('idle');
   const [me, setMe] = useState<Me | null>(null);
   const [booking, setBooking] = useState<Listing | null>(null);
+  const [startingChat, setStartingChat] = useState(false);
 
   // Guards a filter-driven search from racing an in-flight agent turn.
   const searchToken = useRef(0);
 
+  /**
+   * Mint a conversation session and adopt it.
+   *
+   * Shared by the first load and by "New chat" so both succeed and fail the
+   * same way. It rejects rather than swallowing, leaving each caller to decide
+   * what a failure means for it.
+   */
+  const startSession = useCallback(async () => {
+    const { sessionKey: key } = await createSession();
+    setSessionKey(key);
+  }, []);
+
   useEffect(() => {
     getFacets().then(setFacets).catch(() => setFacets(null));
-    createSession()
-      .then((r) => setSessionKey(r.sessionKey))
-      .catch((e: Error) => setError(`Could not connect to the assistant: ${e.message}`));
+    startSession().catch((e: Error) =>
+      setError(`Could not connect to the assistant: ${e.message}`),
+    );
     getMe().then(setMe).catch(() => setMe({ buyer: null, bookingEnabled: false }));
-  }, []);
+  }, [startSession]);
+
+  /**
+   * Start a fresh conversation without a page reload.
+   *
+   * Only the chat resets: the listings, filters and results grid stay put, so
+   * the properties on screen survive a new question. A failure keeps the
+   * existing session and transcript — a new chat that could not start leaves a
+   * working conversation rather than a dead one.
+   */
+  const handleNewChat = useCallback(async () => {
+    setStartingChat(true);
+    try {
+      await startSession();
+      setMessages([GREETING]);
+      setError(null);
+    } catch (e) {
+      setError(`Could not start a new chat: ${(e as Error).message}`);
+    } finally {
+      setStartingChat(false);
+    }
+  }, [startSession]);
 
   /** Sidebar-driven search: deterministic, no LLM. */
   const runFilterSearch = useCallback(async (next: SearchFilters) => {
@@ -199,7 +227,14 @@ export default function App() {
           style={{ borderColor: 'var(--border)' }}
         >
           <div className="flex-1">
-            <ChatPanel messages={messages} onSend={handleSend} busy={chatBusy} error={error} />
+            <ChatPanel
+              messages={messages}
+              onSend={handleSend}
+              onNewChat={handleNewChat}
+              busy={chatBusy}
+              startingChat={startingChat}
+              error={error}
+            />
           </div>
         </section>
 
