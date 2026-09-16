@@ -70,7 +70,7 @@ Viewing bookings need their own OAuth client in the same project, alongside the 
    `calendar.freebusy` fails with `403 insufficientPermissions` the moment the
    app checks whether a slot is free. (`calendar.readonly` also works in place of
    `calendar.freebusy`, but grants more than this app needs.) Leaving the screen in Testing status is fine for a demo project; the trade-off is a refresh token that expires after 7 days instead of running indefinitely.
-5. Run `npm run connect:calendar` **locally** to mint the refresh token — it opens a browser consent flow against `localhost:5858`, which only a developer's machine can complete. It must never run against the deployed service; see the warning below.
+5. Run `npm run connect:calendar` **locally** to mint the refresh token — it opens a browser consent flow against `localhost:5858`, which only a developer's machine can complete. It must never run against the deployed service; see the warning below. If you already ran this before `calendar.freebusy` was added to the scope list, your existing refresh token was minted without it — adding a scope to the code does not upgrade a token that already exists, so re-run this step or the app keeps failing with the same `403`.
 
 Carry the results into the deploy command from step 3 by extending its `--set-env-vars` list — `gcloud run deploy` replaces the whole list on every call, so add these alongside the existing ones rather than passing a second `--set-env-vars` flag:
 

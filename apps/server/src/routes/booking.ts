@@ -25,14 +25,25 @@ function windowBounds(now: number): { timeMin: string; timeMax: string } {
 /** A dead refresh token and a flaky Google are different problems with
  *  different fixes, so they must not collapse into one status. */
 function failure(res: Response, err: unknown): void {
+  console.error('Booking request failed:', err);
   if (err instanceof CalendarDisconnectedError) {
     res.status(503).json({ error: NOT_CONNECTED });
   } else if (err instanceof GoogleError) {
-    res.status(502).json({ error: 'Google Calendar is not responding. Please try again.' });
+    // A 401 or 403 means the grant itself is wrong — a stale scope, a revoked
+    // token, an unshared calendar — which is a reconnect condition, same as a
+    // dead refresh token. Anything else is Google being unavailable, which is
+    // worth a plain retry.
+    if (err.status === 401 || err.status === 403) {
+      res.status(503).json({ error: NOT_CONNECTED });
+    } else {
+      res.status(502).json({ error: 'Google Calendar is not responding. Please try again.' });
+    }
   } else if (err instanceof UpstreamError) {
     res.status(err.status).json({ error: err.message });
   } else {
-    res.status(500).json({ error: (err as Error).message });
+    // The real message is already in the server log above; nothing further
+    // identifies this route as sitting behind Google token handling.
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }
 

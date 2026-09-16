@@ -97,18 +97,59 @@ describe('GET /api/availability', () => {
 
   it('reports a disconnected calendar as 503, not a generic failure', async () => {
     fetchBusy.mockRejectedValueOnce(new CalendarDisconnectedError());
-    await withServer(async (base) => {
-      const res = await fetch(`${base}/api/availability`);
-      expect(res.status).toBe(503);
-      expect(((await res.json()) as { error: string }).error).toContain('connect:calendar');
-    });
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await withServer(async (base) => {
+        const res = await fetch(`${base}/api/availability`);
+        expect(res.status).toBe(503);
+        expect(((await res.json()) as { error: string }).error).toContain('connect:calendar');
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('reports any other Google failure as 502', async () => {
     fetchBusy.mockRejectedValueOnce(new GoogleError('boom', 500));
-    await withServer(async (base) => {
-      expect((await fetch(`${base}/api/availability`)).status).toBe(502);
-    });
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await withServer(async (base) => {
+        expect((await fetch(`${base}/api/availability`)).status).toBe(502);
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('reports a 401 from Google as a reconnect condition, not a retry one', async () => {
+    fetchBusy.mockRejectedValueOnce(new GoogleError('freeBusy failed (HTTP 401): invalid_credentials', 401));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await withServer(async (base) => {
+        const res = await fetch(`${base}/api/availability`);
+        expect(res.status).toBe(503);
+        expect(((await res.json()) as { error: string }).error).toContain('connect:calendar');
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('reports a 403 from Google as a reconnect condition, not a retry one', async () => {
+    // The exact failure a real operator hit during live testing: a token
+    // scoped for calendar.events alone gets 403 insufficientPermissions the
+    // moment freeBusy is called, which means "reconnect", not "try again".
+    fetchBusy.mockRejectedValueOnce(new GoogleError('freeBusy failed (HTTP 403): insufficientPermissions', 403));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await withServer(async (base) => {
+        const res = await fetch(`${base}/api/availability`);
+        expect(res.status).toBe(503);
+        expect(((await res.json()) as { error: string }).error).toContain('connect:calendar');
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
@@ -226,6 +267,22 @@ describe('POST /api/bookings', () => {
   it('rejects a malformed body with 400', async () => {
     await withServer(async (base) => {
       expect((await post(base, { buyer: BUYER })).status).toBe(400);
+    });
+  });
+
+  it('hides the real error message behind a generic one, but logs it server-side', async () => {
+    await withServer(async (base) => {
+      const startIso = await firstSlot(base);
+      getListingById.mockRejectedValueOnce(new Error('ECONNRESET reading corpus shard 3'));
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const res = await post(base, { purpose: 'rent', externalId: '12345', startIso, buyer: BUYER });
+        expect(res.status).toBe(500);
+        expect(((await res.json()) as { error: string }).error).toBe('Something went wrong. Please try again.');
+        expect(spy).toHaveBeenCalledWith('Booking request failed:', expect.any(Error));
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 });

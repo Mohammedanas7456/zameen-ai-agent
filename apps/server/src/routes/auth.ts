@@ -9,7 +9,7 @@ import {
   type StoredBuyer,
 } from '../buyer.js';
 import { config } from '../config.js';
-import { BUYER_SCOPES, authUrl, exchangeCode, fetchUserInfo, GoogleError } from '../google/oauth.js';
+import { BUYER_SCOPES, authUrl, exchangeCode, fetchUserInfo, CalendarDisconnectedError, GoogleError } from '../google/oauth.js';
 import { isBookingEnabled } from '../google/tokens.js';
 
 const THIRTY_DAYS_MS = 30 * 24 * 3600 * 1000;
@@ -100,7 +100,12 @@ export function mountAuthRoutes(app: Express): void {
       res.redirect('/');
     } catch (err) {
       console.error('OAuth callback failed:', err);
-      if (err instanceof GoogleError) {
+      if (err instanceof CalendarDisconnectedError) {
+        // An expired or already-used authorization code turns into
+        // invalid_grant, which is routine and user-recoverable — not the 500
+        // a bare `else` would give it.
+        res.status(400).json({ error: 'Your sign-in link expired or was already used. Please try signing in again.' });
+      } else if (err instanceof GoogleError) {
         res.status(502).json({ error: 'Google sign-in failed. Please try again.' });
       } else {
         res.status(500).json({ error: 'Sign-in could not be completed.' });

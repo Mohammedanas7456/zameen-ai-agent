@@ -67,7 +67,8 @@ They are genuinely different and share only the OAuth client.
 
 `npm run connect:calendar` runs a standalone `tsx` script. It opens a loopback listener on `:5858`, prints the consent URL, captures the code, exchanges it, writes `.google-token.json` (gitignored, exactly like `.vectara-state.json`), and prints the `GOOGLE_REFRESH_TOKEN=` line to paste into `gcloud run deploy`.
 
-- Scopes: `https://www.googleapis.com/auth/calendar.events` plus `openid email`.
+- Scopes: `https://www.googleapis.com/auth/calendar.freebusy` and `https://www.googleapis.com/auth/calendar.events`, plus `openid email`.
+- **Corrected from an original `calendar.events`-only design.** Live testing against a real Google token — the failure mode no mock can reproduce — showed that `freebusy.query` accepts only `calendar`, `calendar.readonly`, `calendar.freebusy` or `calendar.events.freebusy`, and never `calendar.events`. A token scoped for `calendar.events` alone can create the booking but gets `403 insufficientPermissions` the instant it checks whether a slot is free, so both scopes are required and neither implies the other.
 - **`access_type=offline&prompt=consent` is mandatory.** Without `prompt=consent`, a *repeat* authorization of an already-authorized client returns no `refresh_token` at all, and the script silently produces nothing usable.
 - This never runs on the deployed service. That is what keeps the private-Cloud-Run problem away from the estate-agent side entirely.
 
@@ -280,7 +281,7 @@ Done once, by hand, and written into `DEPLOY.md`:
 1. Enable the Google Calendar API on the project.
 2. Create an OAuth client of type **Web application**.
 3. Register redirect URIs: `http://localhost:5858/callback` (the connect script), `http://localhost:5173/api/auth/google/callback` (dev), and `<PUBLIC_BASE_URL>/api/auth/google/callback` (production).
-4. Configure the consent screen with the `calendar.events` scope and add yourself — plus any buyer testers — as test users.
+4. Configure the consent screen with **both** the `calendar.freebusy` and `calendar.events` scopes — `calendar.events` alone cannot call `freebusy.query` — and add yourself — plus any buyer testers — as test users.
 
 ## Testing
 
@@ -320,6 +321,7 @@ The booking logic splits into a pure engine, a pure event builder, a thin networ
 ## Known limits
 
 - **The double-booking race is narrowed, not eliminated.** Google Calendar does not enforce slot exclusivity. Two buyers who both load the modal, both see 15:00 free and both submit will both get the event. Re-checking `freeBusy` immediately before `events.insert` shrinks the window to milliseconds; a genuine fix needs a lock, and a lock needs the datastore this design deliberately avoids.
+- **`POST /api/bookings` requires no authentication and is not rate-limited.** Anyone who can reach it can fill all 112 bookable slots in the 14-day window (14 days × 8 slots/day) in seconds, and every accepted booking makes Google send a real calendar invite from the estate agent to whatever address the caller supplies. An in-memory per-IP counter would not fix this on Cloud Run — every instance keeps its own count and the service scales to zero, so it is trivial to evade — which is why no rate limiter is implemented; the de facto mitigation today is that the Cloud Run service itself is private.
 - **Refresh tokens expire after 7 days** while the OAuth consent screen is in Testing status. `npm run connect:calendar` is the fix, and the `503` state makes it visible rather than mysterious. Publishing the consent screen to Production removes the expiry but requires Google verification for the sensitive `calendar.events` scope.
 - **Buyer Google sign-in works only for listed test users** (max 100), for the same reason. Everyone else uses the manual path, which is why that path is treated as primary rather than as a fallback.
 - **OAuth cannot work on the current deployment.** The Cloud Run service is private — `--allow-unauthenticated` was blocked by holding only `roles/editor` — and Google redirects the browser with no auth header. Buyer sign-in therefore works locally but not in production until an owner runs the `run.invoker` binding in `DEPLOY.md`, or the service moves to the `zameen-ai-agent` project. The estate-agent connection is unaffected, because it never runs on the deployed service.

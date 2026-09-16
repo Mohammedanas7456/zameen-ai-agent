@@ -35,7 +35,10 @@ export async function fetchBusy(timeMinIso: string, timeMaxIso: string): Promise
     signal: AbortSignal.timeout(30_000),
   });
 
-  if (!res.ok) throw new GoogleError(`freeBusy failed (HTTP ${res.status})`, res.status);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new GoogleError(`freeBusy failed (HTTP ${res.status}): ${detail.slice(0, 200)}`, res.status);
+  }
 
   const data = (await res.json().catch(() => ({}))) as FreeBusyResponse;
   const calendar = data.calendars?.[bookingConfig.calendarId];

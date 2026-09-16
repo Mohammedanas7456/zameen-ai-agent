@@ -82,6 +82,15 @@ describe('GET /api/auth/google', () => {
       expect(res.headers.get('set-cookie')).toContain('zameen_oauth_state=');
     });
   });
+
+  it('requests no offline access, so the buyer flow stays online-only', async () => {
+    await withServer(async (base) => {
+      const res = await fetch(`${base}/api/auth/google`, { redirect: 'manual' });
+      const target = new URL(res.headers.get('location')!);
+      expect(target.searchParams.has('access_type')).toBe(false);
+      expect(target.searchParams.has('prompt')).toBe(false);
+    });
+  });
 });
 
 describe('GET /api/auth/google/callback', () => {
@@ -140,6 +149,94 @@ describe('GET /api/auth/google/callback', () => {
         via: 'google',
       });
     });
+  });
+
+  it('sets HttpOnly, SameSite=Lax and a 30-day Max-Age on the buyer cookie', async () => {
+    // Captured before stubbing: the test's own request to the local server
+    // must not be intercepted by the stub meant for Google's endpoints.
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.startsWith('http://127.0.0.1')) return realFetch(input, init);
+        return {
+          ok: true,
+          status: 200,
+          json: async () =>
+            url.includes('userinfo')
+              ? { name: 'Asad Khan', email: 'asad@example.com' }
+              : { access_token: 'at', expires_in: 3599 },
+          text: async (): Promise<string> => '',
+        };
+      }),
+    );
+
+    await withServer(async (base) => {
+      const nonce = 'd'.repeat(32);
+      const stateCookie = `zameen_oauth_state=${encodeURIComponent(sign({ n: nonce }, config.sessionSecret))}`;
+
+      const res = await fetch(`${base}/api/auth/google/callback?code=abc&state=${nonce}`, {
+        redirect: 'manual',
+        headers: { Cookie: stateCookie },
+      });
+
+      expect(res.status).toBe(302);
+      const buyerCookie = res.headers.getSetCookie().find((c) => c.startsWith(`${BUYER_COOKIE}=`));
+      // These are load-bearing per the spec: SameSite=Strict would withhold
+      // the cookie on this very top-level redirect and silently break sign-in.
+      expect(buyerCookie).toContain('HttpOnly');
+      expect(buyerCookie).toContain('SameSite=Lax');
+      expect(buyerCookie).toContain('Max-Age=2592000');
+    });
+  });
+
+  it('returns 400 when the authorization code is expired or already used', async () => {
+    const realFetch = globalThis.fetch;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.startsWith('http://127.0.0.1')) return realFetch(input, init);
+        // Google turns a reused or expired authorization code into
+        // invalid_grant at the token endpoint, which postToken maps to
+        // CalendarDisconnectedError.
+        if (url.includes('oauth2.googleapis.com/token')) {
+          return {
+            ok: false,
+            status: 400,
+            json: async () => ({ error: 'invalid_grant' }),
+            text: async (): Promise<string> => '',
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ access_token: 'at', expires_in: 3599 }),
+          text: async (): Promise<string> => '',
+        };
+      }),
+    );
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await withServer(async (base) => {
+        const nonce = 'e'.repeat(32);
+        const stateCookie = `zameen_oauth_state=${encodeURIComponent(sign({ n: nonce }, config.sessionSecret))}`;
+
+        const res = await fetch(`${base}/api/auth/google/callback?code=expired&state=${nonce}`, {
+          redirect: 'manual',
+          headers: { Cookie: stateCookie },
+        });
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as { error: string };
+        expect(body.error).toBe('Your sign-in link expired or was already used. Please try signing in again.');
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('returns 502 when a GoogleError occurs during token exchange', async () => {

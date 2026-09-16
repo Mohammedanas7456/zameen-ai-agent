@@ -160,4 +160,15 @@ describe('fetchUserInfo', () => {
     stubFetch({ sub: '1', email: 'asad@example.com' });
     await expect(fetchUserInfo('at')).resolves.toEqual({ name: '', email: 'asad@example.com' });
   });
+
+  it('throws GoogleError when Google returns HTTP 200 with a body that fails to parse as JSON', async () => {
+    stubFetch(null, {
+      ok: true,
+      status: 200,
+      jsonFn: async () => {
+        throw new SyntaxError('Unexpected token');
+      },
+    });
+    await expect(fetchUserInfo('at')).rejects.toBeInstanceOf(GoogleError);
+  });
 });

@@ -143,9 +143,12 @@ export async function fetchUserInfo(accessToken: string): Promise<{ name: string
 
   if (!res.ok) throw new GoogleError(`Could not read the Google profile (HTTP ${res.status})`, res.status);
 
-  const data = (await res.json()) as Record<string, unknown>;
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  const email = typeof data['email'] === 'string' ? data['email'] : '';
+  if (!email) throw new GoogleError('Google returned a profile response with no email', 502);
+
   return {
     name: typeof data['name'] === 'string' ? data['name'] : '',
-    email: typeof data['email'] === 'string' ? data['email'] : '',
+    email,
   };
 }

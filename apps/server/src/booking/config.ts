@@ -47,10 +47,15 @@ export function readBookingConfig(env: Env): BookingConfig {
     tzOffset: textOr(env, 'BOOKING_TZ_OFFSET', '+05:00'),
     dayStartHour: intOr(env, 'BOOKING_DAY_START', 11),
     dayEndHour: intOr(env, 'BOOKING_DAY_END', 19),
-    slotMinutes: intOr(env, 'BOOKING_SLOT_MINUTES', 45),
-    gridMinutes: intOr(env, 'BOOKING_GRID_MINUTES', 60),
+    // A zero or negative slotMinutes/gridMinutes turns slotsForWindow's grid
+    // loop into one that steps by nothing (or backwards) and never reaches
+    // its exit condition, so both are floored at 1 minute.
+    slotMinutes: Math.max(1, intOr(env, 'BOOKING_SLOT_MINUTES', 45)),
+    gridMinutes: Math.max(1, intOr(env, 'BOOKING_GRID_MINUTES', 60)),
     leadDays: intOr(env, 'BOOKING_LEAD_DAYS', 1),
-    windowDays: intOr(env, 'BOOKING_WINDOW_DAYS', 14),
+    // No genuine business need for a window this wide; the ceiling just keeps
+    // a mistyped env var from making every request compute months of days.
+    windowDays: Math.min(60, intOr(env, 'BOOKING_WINDOW_DAYS', 14)),
     closedWeekdays: weekdaysOr(env, 'BOOKING_CLOSED_DAYS', [0]),
     calendarId: textOr(env, 'GOOGLE_CALENDAR_ID', 'primary'),
   };

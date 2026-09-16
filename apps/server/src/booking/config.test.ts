@@ -46,4 +46,20 @@ describe('readBookingConfig', () => {
   it('drops weekday values outside 0-6', () => {
     expect(readBookingConfig({ BOOKING_CLOSED_DAYS: '0,9,-2,6' }).closedWeekdays).toEqual([0, 6]);
   });
+
+  it('clamps a zero grid or slot size to 1 minute rather than letting the slot loop spin forever', () => {
+    const cfg = readBookingConfig({ BOOKING_GRID_MINUTES: '0', BOOKING_SLOT_MINUTES: '0' });
+    expect(cfg.gridMinutes).toBe(1);
+    expect(cfg.slotMinutes).toBe(1);
+  });
+
+  it('clamps a negative grid or slot size to 1 minute', () => {
+    const cfg = readBookingConfig({ BOOKING_GRID_MINUTES: '-30', BOOKING_SLOT_MINUTES: '-5' });
+    expect(cfg.gridMinutes).toBe(1);
+    expect(cfg.slotMinutes).toBe(1);
+  });
+
+  it('clamps an excessive booking window to a sane ceiling', () => {
+    expect(readBookingConfig({ BOOKING_WINDOW_DAYS: '9999' }).windowDays).toBe(60);
+  });
 });
