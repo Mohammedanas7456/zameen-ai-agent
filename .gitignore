@@ -11,3 +11,4 @@ data/raw/
 .vectara-state.json
 coverage/
 .claude/worktrees/
+*.tsbuildinfo
