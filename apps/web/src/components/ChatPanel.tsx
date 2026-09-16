@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 export interface ChatMessage {
   id: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
   /** Set while the assistant is mid-search, to show what it is doing. */
   activity?: { query: string; filter: string } | null;
@@ -109,38 +109,53 @@ export function ChatPanel({ messages, onSend, busy, error }: Props) {
   return (
     <div className="flex h-full flex-col" style={{ background: 'var(--panel)' }}>
       <div className="scroll-slim flex-1 space-y-3 overflow-y-auto p-4">
-        {messages.map((m) => (
-          <div key={m.id} className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
-            <div
-              className={`max-w-[92%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
-                m.role === 'user'
-                  ? 'rounded-br-md bg-brand-600 text-white'
-                  : 'rounded-bl-md border'
-              }`}
-              style={
-                m.role === 'assistant'
-                  ? { background: 'var(--surface)', borderColor: 'var(--border)' }
-                  : undefined
-              }
-            >
-              {m.activity && <ActivityChip query={m.activity.query} filter={m.activity.filter} />}
-              <div className="space-y-2">
-                <RichText text={m.content} />
+        {messages.map((m) => {
+          if (m.role === 'system') {
+            return (
+              <div key={m.id} className="flex justify-center">
+                <p
+                  className="rounded-lg border px-2.5 py-1.5 text-center text-[11px]"
+                  style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}
+                >
+                  {m.content}
+                </p>
               </div>
-              {m.streaming && m.content === '' && !m.activity && (
-                <div className="flex gap-1 py-1">
-                  {[0, 150, 300].map((delay) => (
-                    <span
-                      key={delay}
-                      className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500"
-                      style={{ animationDelay: `${delay}ms` }}
-                    />
-                  ))}
+            );
+          }
+
+          return (
+            <div key={m.id} className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+              <div
+                className={`max-w-[92%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
+                  m.role === 'user'
+                    ? 'rounded-br-md bg-brand-600 text-white'
+                    : 'rounded-bl-md border'
+                }`}
+                style={
+                  m.role === 'assistant'
+                    ? { background: 'var(--surface)', borderColor: 'var(--border)' }
+                    : undefined
+                }
+              >
+                {m.activity && <ActivityChip query={m.activity.query} filter={m.activity.filter} />}
+                <div className="space-y-2">
+                  <RichText text={m.content} />
                 </div>
-              )}
+                {m.streaming && m.content === '' && !m.activity && (
+                  <div className="flex gap-1 py-1">
+                    {[0, 150, 300].map((delay) => (
+                      <span
+                        key={delay}
+                        className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500"
+                        style={{ animationDelay: `${delay}ms` }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {messages.length <= 1 && (
           <div className="space-y-1.5 pt-1">

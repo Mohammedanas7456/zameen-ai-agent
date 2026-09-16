@@ -6,6 +6,8 @@ interface Props {
   busy: boolean;
   /** Where the current results came from, so the header can say so. */
   source: 'idle' | 'agent' | 'filters';
+  onBook?: (listing: Listing) => void;
+  bookingEnabled?: boolean;
 }
 
 function SkeletonCard() {
@@ -24,7 +26,7 @@ function SkeletonCard() {
   );
 }
 
-export function ResultsGrid({ listings, busy, source }: Props) {
+export function ResultsGrid({ listings, busy, source, onBook, bookingEnabled }: Props) {
   if (busy && listings.length === 0) {
     return (
       <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -59,7 +61,13 @@ export function ResultsGrid({ listings, busy, source }: Props) {
   return (
     <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3">
       {listings.map((listing, i) => (
-        <PropertyCard key={`${listing.purpose}-${listing.externalId}`} listing={listing} index={i} />
+        <PropertyCard
+          key={`${listing.purpose}-${listing.externalId}`}
+          listing={listing}
+          index={i}
+          {...(onBook ? { onBook } : {})}
+          bookingEnabled={bookingEnabled ?? false}
+        />
       ))}
     </div>
   );

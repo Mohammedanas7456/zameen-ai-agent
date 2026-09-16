@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Facets, Listing, SearchFilters } from '@zameen/shared';
+import type { Booking, Facets, Listing, SearchFilters } from '@zameen/shared';
 import { AccountChip } from './components/AccountChip.js';
+import { BookingModal } from './components/BookingModal.js';
 import { ChatPanel, type ChatMessage } from './components/ChatPanel.js';
 import { FilterBar } from './components/FilterBar.js';
 import { ResultsGrid } from './components/ResultsGrid.js';
 import { createSession, getFacets, searchListings, streamChat } from './lib/api.js';
-import { getMe, signOut, type Me } from './lib/booking.js';
+import { getMe, signOut, slotRangeLabel, type Me } from './lib/booking.js';
 import { canonicalArea, filtersFromExpression } from './lib/filters.js';
 
 const GREETING: ChatMessage = {
@@ -26,6 +27,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<'idle' | 'agent' | 'filters'>('idle');
   const [me, setMe] = useState<Me | null>(null);
+  const [booking, setBooking] = useState<Listing | null>(null);
 
   // Guards a filter-driven search from racing an in-flight agent turn.
   const searchToken = useRef(0);
@@ -78,6 +80,17 @@ export default function App() {
   const handleSignOut = useCallback(async () => {
     await signOut().catch(() => {});
     setMe((prev) => (prev ? { ...prev, buyer: null } : prev));
+  }, []);
+
+  const handleBooked = useCallback((made: Booking) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `sys-${made.eventId}`,
+        role: 'system',
+        content: `Viewing booked for ${slotRangeLabel(made.startIso, made.endIso)}. An invite is on its way to ${made.buyerEmail}.`,
+      },
+    ]);
   }, []);
 
   const handleSend = useCallback(
@@ -195,10 +208,25 @@ export default function App() {
             busy={searchBusy}
           />
           <div className="scroll-slim min-h-0 flex-1 overflow-y-auto">
-            <ResultsGrid listings={listings} busy={searchBusy} source={source} />
+            <ResultsGrid
+              listings={listings}
+              busy={searchBusy}
+              source={source}
+              onBook={setBooking}
+              bookingEnabled={me?.bookingEnabled ?? false}
+            />
           </div>
         </section>
       </main>
+
+      {booking && (
+        <BookingModal
+          listing={booking}
+          me={me}
+          onClose={() => setBooking(null)}
+          onBooked={handleBooked}
+        />
+      )}
     </div>
   );
 }
