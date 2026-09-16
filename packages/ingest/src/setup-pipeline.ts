@@ -232,11 +232,12 @@ async function ensurePipeline(client: VectaraClient): Promise<void> {
     transform: {
       type: 'agent',
       agent_key: INGEST_AGENT_KEY,
-      // A record counts as processed only when the agent actually indexed it,
-      // so a validation failure never looks like success.
+      // Crawl seeds (the listing index pages) are always fetched, so the agent
+      // deliberately skips them — that is a normal outcome, not a failure.
+      // Anything else, including a validation rejection, fails the record.
       verification: {
         type: 'condition',
-        expression: "get('$.output') | test('^INDEXED: ')",
+        expression: "get('$.output') | test('^(INDEXED|SKIPPED): ')",
       },
     },
     sync_mode: 'incremental',

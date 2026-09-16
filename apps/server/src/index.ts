@@ -1,26 +1,17 @@
 import express, { type Request, type Response } from 'express';
 import cors from 'cors';
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Facets, SearchFilters } from '@zameen/shared';
+import type { SearchFilters } from '@zameen/shared';
 import { config, ROOT } from './config.js';
 import { createSession, searchListings, UpstreamError } from './vectara.js';
 import { handleUserMessage } from './chat.js';
+import { getFacets } from './facets.js';
 import type { ClientEvent } from './sse.js';
 import { mountWebClient } from './static.js';
 
 const app = express();
 app.use(cors({ origin: config.corsOrigins }));
 app.use(express.json({ limit: '256kb' }));
-
-/** Facets are static for a snapshot, so read once and keep them in memory. */
-let facetsCache: Facets | null = null;
-async function getFacets(): Promise<Facets> {
-  if (!facetsCache) {
-    facetsCache = JSON.parse(await readFile(join(ROOT, 'data', 'facets.json'), 'utf8')) as Facets;
-  }
-  return facetsCache;
-}
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, corpus: config.corpusKey, agent: config.agentKey });
@@ -29,8 +20,8 @@ app.get('/api/health', (_req, res) => {
 app.get('/api/facets', async (_req, res) => {
   try {
     res.json(await getFacets());
-  } catch {
-    res.status(500).json({ error: 'Facets unavailable. Run "npm run normalize" first.' });
+  } catch (err) {
+    res.status(502).json({ error: `Could not read the corpus: ${(err as Error).message}` });
   }
 });
 

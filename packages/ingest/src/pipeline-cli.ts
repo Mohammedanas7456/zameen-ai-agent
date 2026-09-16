@@ -50,9 +50,22 @@ async function listRuns(client: VectaraClient, limit = 5): Promise<Run[]> {
 async function follow(client: VectaraClient, runId: string): Promise<Run | null> {
   // Runs take minutes; poll gently and print only when something changes.
   let last = '';
+  let missing = 0;
+
   for (let i = 0; i < 240; i++) {
     const run = (await listRuns(client, 10)).find((r) => r.id === runId);
-    if (!run) return null;
+
+    if (!run) {
+      // A freshly triggered run takes a moment to appear in the listing, so
+      // absence is only conclusive after several consecutive misses.
+      if (++missing > 5) {
+        console.warn('  run is no longer listed — check "npm run pipeline:status"');
+        return null;
+      }
+      await sleep(5_000);
+      continue;
+    }
+    missing = 0;
 
     const line = describe(run);
     if (line !== last) {

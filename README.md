@@ -42,12 +42,36 @@ Open <http://localhost:5173>.
 
 | Command | Effect |
 |---|---|
-| `npm run scrape` | Fetch 200 rent + 200 buy listings from Zameen |
-| `npm run normalize` | Build `data/listings.json` and `data/facets.json` |
-| `npm run setup:vectara` | Create corpus, index all documents, create/update the agent |
-| `npm run setup:agent` | Update **only** the agent (fast — skips re-indexing) |
+| `npm run scrape` | Backfill: fetch 200 rent + 200 buy listings from Zameen |
+| `npm run normalize` | Build `data/listings.json` from the backfill |
+| `npm run setup:vectara` | Create corpus, index the backfill, create/update the chat agent |
+| `npm run setup:agent` | Update **only** the chat agent (fast — skips re-indexing) |
+| `npm run setup:pipeline` | Create/update the daily ingestion pipeline, its transform agent and validator |
+| `npm run pipeline:run` | Trigger an ingestion run now and follow it |
+| `npm run pipeline:status` | Show recent ingestion runs |
 | `npm run dev` | Run API and UI together |
 | `npm test` | Run the test suite |
+
+## Keeping the corpus fresh
+
+Two paths write to the corpus, deliberately:
+
+**Backfill (`npm run bootstrap`)** — parses `window.state` out of 16 listing index pages and indexes 400 properties with *deterministic* metadata. Fast, free, exact. Use it to seed a new corpus.
+
+**Daily pipeline (`zameen_karachi_daily`)** — a native Vectara ingestion pipeline. Vectara's own crawler fetches pages (honouring `robots.txt`, 1 req/s), hands each to the `zameen_ingest_agent` transform, and the agent extracts fields, validates them and indexes one document per property.
+
+```
+trigger:    cron "0 3 * * *"   (08:00 Pakistan time)
+sync_mode:  incremental
+source:     web / crawl, seeded from the 16 index pages, max_pages 400
+transform:  agent -> validate_listing -> core_document_index (reindex: true)
+```
+
+`reindex: true` gives upsert semantics, so re-crawling a page replaces its document rather than duplicating it. `first_seen_at` / `last_seen_at` track lifecycle: ingestion is purely additive, but stale listings stay identifiable for a later prune.
+
+**Metadata from the pipeline is LLM-extracted, not parsed**, so it is less reliable than the backfill. `validate_listing` is the guard — it range-checks prices against plausible Karachi bounds, rejects impossible bedroom counts and areas, and constrains every enum. The pipeline's `transform.verification` keys off its `success` flag, so a bad extraction **fails the record instead of entering the corpus**.
+
+Why not parse deterministically inside the pipeline? Every route is closed: `window.state` is a single ~700 KB line (too large for a model turn), `artifact_grep` is positionless and returns 432 ambiguous matches on a page that embeds "similar properties", `artifact_jq` needs JSON rather than HTML, and lambda tools can neither read artifacts nor accept 700 KB arguments.
 | `npm run build` | Build shared, server, and the client bundle |
 
 ## Deploying
@@ -77,7 +101,8 @@ Every filterable attribute also has a lowercase `*_norm` twin (`area_l3_norm`, `
 
 - **Source**: the `/Rentals/` and `/Homes/` listing index pages, which `robots.txt` permits. The disallowed `/Karachi*` relative-link paths are never touched. Requests are sequential with a 2s delay — 16 page fetches, once.
 - **Floor is not a structured Zameen field.** It's parsed from listing text ("Ground Floor Portion", "1st Floor") and inferred from property type ("Upper Portions" → upper). About **20% of listings** state a floor; the rest are `unknown`. The UI says so, and the agent is told not to apply a floor filter unless asked.
-- **The snapshot is static.** Re-run `npm run scrape && npm run normalize && npm run setup:vectara` to refresh.
+- **The backfill snapshot is static**; the daily pipeline is what keeps the corpus current.
+- **Facets come from the corpus**, not from a file, cached for an hour — so the area list and counts track ingestion instead of drifting.
 - Listing photos come from `media.zameen.com` thumbnails derived from the photo id — the `coverPhoto.url` in the page payload points at a private bucket that returns 403.
 
 ## Configuration
