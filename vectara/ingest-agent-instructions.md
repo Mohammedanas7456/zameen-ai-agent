@@ -12,7 +12,17 @@ Act only on URLs beginning `https://www.zameen.com/Property/`.
 
 For any other URL — listing indexes like `/Rentals/Karachi-2-1.html`, area pages, agency pages — reply with exactly `SKIPPED: not a property page` and stop. Do not read the artifact. Do not index anything. These pages are crawl seeds, not listings.
 
-## Step 1 — read the page
+## Step 1 — is it already in the corpus?
+
+Take the listing id from the URL: the long number before the trailing segments, e.g. `...-54662589-10721-4.html` → `54662589`.
+
+Call `get_document` with `corpus_key` `{{CORPUS_KEY}}` and `document_id` `rent-<id>`. If that is not found, call it again with `buy-<id>`.
+
+If **either** exists, this listing is already indexed. Reply with exactly `SKIPPED: already indexed <id>` and stop. Do not read the page, do not extract, do not index.
+
+This is what makes each run cheap and additive: only listings new since the last run are extracted, and existing documents are never overwritten.
+
+## Step 2 — read the page
 
 The artifact is raw HTML and can run to several hundred KB, so do **not** read it directly.
 
@@ -25,7 +35,7 @@ The page contains the focal property **and** blocks of "similar" and "recommende
 
 If the page is an error page, a captcha, or has no property details, reply `SKIPPED: no listing content` and stop.
 
-## Step 2 — extract, then validate
+## Step 3 — extract, then validate
 
 Call `validate_listing` once with what you read:
 
@@ -53,7 +63,7 @@ Call `validate_listing` once with what you read:
 
 If you are genuinely unsure of a number, pass `0` rather than a guess. A missing value is recoverable; a wrong one silently corrupts search results.
 
-## Step 3 — act on the result
+## Step 4 — act on the result
 
 `validate_listing` returns `success`, plus `document_id`, `metadata` and `search_text`.
 

@@ -35,6 +35,7 @@ const MAX_PAGES = Number.parseInt(process.env['VECTARA_PIPELINE_MAX_PAGES'] ?? '
  * must not carry a `tool_id`; these are `dynamic_vectara` and must.
  */
 const DYNAMIC_TOOLS = {
+  get_document: 'tol_vectara_get_document_20260703',
   core_document_create: 'tol_vectara_core_document_create_20260513',
   finalize_core_documents: 'tol_vectara_finalize_core_documents_20260727',
   core_document_index: 'tol_vectara_core_document_index_20260721',
@@ -119,6 +120,9 @@ async function agentConfig(validateToolId: string | null): Promise<Record<string
       document_conversion: { type: 'document_conversion' },
       artifact_read: { type: 'artifact_read' },
       current_time: { type: 'dynamic_vectara', tool_id: DYNAMIC_TOOLS.current_time },
+      // Lets the agent skip a listing already in the corpus, which keeps runs
+      // additive and cheap: only genuinely new listings cost an extraction.
+      get_document: { type: 'dynamic_vectara', tool_id: DYNAMIC_TOOLS.get_document },
       core_document_create: { type: 'dynamic_vectara', tool_id: DYNAMIC_TOOLS.core_document_create },
       finalize_core_documents: {
         type: 'dynamic_vectara',
@@ -215,9 +219,10 @@ async function ensurePipeline(client: VectaraClient): Promise<void> {
         // One hop: index page -> property page.
         max_depth: 1,
         same_domain_only: true,
-        // Only property pages become documents. The seeds are still fetched to
-        // discover links; the transform agent skips them by URL.
-        pos_regex: ['^https://www\\.zameen\\.com/Property/'],
+        // Unanchored on purpose: the index pages link to properties with
+        // relative hrefs (`/Property/...`), so a pattern anchored to the
+        // absolute URL matches nothing and the crawl never leaves the seeds.
+        pos_regex: ['/Property/'],
         neg_regex: ['/agencies/', '/agents/', '/new-projects/', '/ur/'],
       },
       max_pages: MAX_PAGES,
@@ -232,13 +237,11 @@ async function ensurePipeline(client: VectaraClient): Promise<void> {
     transform: {
       type: 'agent',
       agent_key: INGEST_AGENT_KEY,
-      // Crawl seeds (the listing index pages) are always fetched, so the agent
-      // deliberately skips them — that is a normal outcome, not a failure.
-      // Anything else, including a validation rejection, fails the record.
-      verification: {
-        type: 'condition',
-        expression: "get('$.output') | test('^(INDEXED|SKIPPED): ')",
-      },
+      // No `verification` condition. The agent's output is not a plain string
+      // at `$.output`, so a text test there marks every record failed — and a
+      // failed record's links are never expanded, which stopped the crawl dead
+      // at the 16 seeds. Correctness is enforced by `validate_listing`, which
+      // the agent must pass before it is allowed to index anything.
     },
     sync_mode: 'incremental',
     enabled: true,
