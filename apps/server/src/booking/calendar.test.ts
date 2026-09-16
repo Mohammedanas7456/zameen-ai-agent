@@ -9,11 +9,11 @@ const { GoogleError } = await import('../google/oauth.js');
 
 afterEach(() => vi.unstubAllGlobals());
 
-function stubFetch(body: unknown, init: { ok?: boolean; status?: number } = {}) {
+function stubFetch(body: unknown, init: { ok?: boolean; status?: number; jsonFn?: () => Promise<unknown> } = {}) {
   const spy = vi.fn(async () => ({
     ok: init.ok ?? true,
     status: init.status ?? 200,
-    json: async () => body,
+    json: init.jsonFn ?? (async () => body),
     text: async () => JSON.stringify(body),
   }));
   vi.stubGlobal('fetch', spy);
@@ -63,6 +63,27 @@ describe('fetchBusy', () => {
     stubFetch({ error: 'boom' }, { ok: false, status: 500 });
     await expect(fetchBusy('a', 'b')).rejects.toBeInstanceOf(GoogleError);
   });
+
+  it('throws GoogleError when the 200 response contains calendars but not the requested id', async () => {
+    stubFetch({ calendars: { other_calendar: { busy: [] } } });
+    await expect(fetchBusy('a', 'b')).rejects.toBeInstanceOf(GoogleError);
+  });
+
+  it('throws GoogleError when the 200 response has no calendars key at all', async () => {
+    stubFetch({});
+    await expect(fetchBusy('a', 'b')).rejects.toBeInstanceOf(GoogleError);
+  });
+
+  it('throws GoogleError when the 200 body fails to parse as JSON', async () => {
+    stubFetch(null, {
+      ok: true,
+      status: 200,
+      jsonFn: async () => {
+        throw new SyntaxError('Unexpected token');
+      },
+    });
+    await expect(fetchBusy('a', 'b')).rejects.toBeInstanceOf(GoogleError);
+  });
 });
 
 describe('insertEvent', () => {
@@ -82,6 +103,22 @@ describe('insertEvent', () => {
 
   it('fails on a non-OK response', async () => {
     stubFetch({ error: 'nope' }, { ok: false, status: 403 });
+    await expect(insertEvent(body)).rejects.toBeInstanceOf(GoogleError);
+  });
+
+  it('throws GoogleError when the 200 body fails to parse as JSON', async () => {
+    stubFetch(null, {
+      ok: true,
+      status: 200,
+      jsonFn: async () => {
+        throw new SyntaxError('Unexpected token');
+      },
+    });
+    await expect(insertEvent(body)).rejects.toBeInstanceOf(GoogleError);
+  });
+
+  it('throws GoogleError when the 200 body is valid JSON but has no id', async () => {
+    stubFetch({ htmlLink: 'https://calendar.google.com/event?eid=1' });
     await expect(insertEvent(body)).rejects.toBeInstanceOf(GoogleError);
   });
 });

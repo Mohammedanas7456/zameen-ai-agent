@@ -37,7 +37,7 @@ export async function fetchBusy(timeMinIso: string, timeMaxIso: string): Promise
 
   if (!res.ok) throw new GoogleError(`freeBusy failed (HTTP ${res.status})`, res.status);
 
-  const data = (await res.json()) as FreeBusyResponse;
+  const data = (await res.json().catch(() => ({}))) as FreeBusyResponse;
   const calendar = data.calendars?.[bookingConfig.calendarId];
 
   // A per-calendar error is reported inside a 200 response, so this is the
@@ -48,7 +48,12 @@ export async function fetchBusy(timeMinIso: string, timeMaxIso: string): Promise
     throw new GoogleError(`Calendar '${bookingConfig.calendarId}' is not readable: ${reasons}`, 502);
   }
 
-  return (calendar?.busy ?? [])
+  // If the calendar key is missing from the response, we cannot read it.
+  if (!calendar) {
+    throw new GoogleError(`freeBusy response did not include calendar '${bookingConfig.calendarId}'`, 502);
+  }
+
+  return (calendar.busy ?? [])
     .map((window) => ({ start: Date.parse(window.start), end: Date.parse(window.end) }))
     .filter((window) => Number.isFinite(window.start) && Number.isFinite(window.end));
 }
@@ -69,6 +74,10 @@ export async function insertEvent(body: GoogleEventBody): Promise<{ id: string; 
     throw new GoogleError(`Could not create the event (HTTP ${res.status}): ${detail.slice(0, 200)}`, res.status);
   }
 
-  const data = (await res.json()) as { id?: string; htmlLink?: string };
-  return { id: String(data.id ?? ''), htmlLink: String(data.htmlLink ?? '') };
+  const data = (await res.json().catch(() => ({}))) as { id?: string; htmlLink?: string };
+  if (typeof data.id !== 'string' || data.id === '') {
+    throw new GoogleError('Google returned an event creation response with no id', 502);
+  }
+
+  return { id: data.id, htmlLink: String(data.htmlLink ?? '') };
 }
