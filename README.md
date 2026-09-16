@@ -52,6 +52,7 @@ Open <http://localhost:5173>.
 | `npm run pipeline:failures` | Show dead-lettered records, grouped by cause |
 | `npm run dev` | Run API and UI together |
 | `npm test` | Run the test suite |
+| `npm run connect:calendar` | One-time: mint the estate agent's Google Calendar refresh token |
 
 ## Keeping the corpus fresh
 
@@ -103,6 +104,18 @@ A lambda tool's input schema is generated from its Python signature and is there
 
 Every filterable attribute also has a lowercase `*_norm` twin (`area_l3_norm`, `property_type_norm`) so a casing mistake can't silently return zero results.
 
+## Booking a viewing
+
+A buyer can book a viewing on any listing, checked live against the estate agent's Google Calendar. Getting there takes two one-time setup steps; day-to-day booking needs none.
+
+**Connect the calendar once** — `npm run connect:calendar` runs a short local OAuth flow: it prints a consent URL, listens on `localhost:5858` for the callback, and once you grant `calendar.events` access it writes `.google-token.json` (gitignored) and prints a `GOOGLE_REFRESH_TOKEN=` line to carry into the Cloud Run deploy command. It only ever runs on a developer's machine, never on the deployed service — see [DEPLOY.md](DEPLOY.md) for why. Until it has run once, `/api/availability` and `/api/bookings` respond `503` and the UI disables "Book a viewing".
+
+**Google sign-in still asks for a phone number** — signing in fills in name and email, but Google's identity scopes never return a phone number, so the booking form always asks for one; the agent needs a way to reach a buyer who never replies in chat. A returning buyer's phone is carried over from their last booking (in the same signed cookie as their identity) so it isn't retyped.
+
+**Slots default to Karachi business hours** — 11:00–19:00, Monday–Saturday (Sunday closed), in 45-minute viewings on a 60-minute grid, the 15-minute gap being travel time between showings. Booking opens 1 day out and stays open on a rolling 14-day window; every one of those numbers is `BOOKING_*`-overridable (see the table below) if the agent's hours differ. The `+05:00` offset is fixed rather than computed, because Pakistan has had no DST since 2009.
+
+**A `503` from booking means the connection dropped, not that something broke** — most often because the OAuth consent screen is still in *Testing* status, which caps a refresh token at 7 days; a revoked connection looks identical. Either way the fix is the same: re-run `npm run connect:calendar`.
+
 ## Data notes
 
 - **Source**: the `/Rentals/` and `/Homes/` listing index pages, which `robots.txt` permits. The disallowed `/Karachi*` relative-link paths are never touched. Requests are sequential with a 2s delay — 16 page fetches, once.
@@ -121,5 +134,21 @@ Every filterable attribute also has a lowercase `*_norm` twin (`area_l3_norm`, `
 | `VECTARA_AGENT_KEY` | `zameen_property_assistant` |
 | `VECTARA_AGENT_MODEL` | `gpt-5.5` |
 | `PORT` | `8787` |
+| `GOOGLE_CLIENT_ID` | *(empty — "Book a viewing" disabled)* |
+| `GOOGLE_CLIENT_SECRET` | *(empty)* |
+| `GOOGLE_REFRESH_TOKEN` | *(empty — read from `.google-token.json` locally)* |
+| `GOOGLE_CALENDAR_ID` | `primary` |
+| `PUBLIC_BASE_URL` | `http://localhost:5173` |
+| `SESSION_SECRET` | *(random per boot — set explicitly outside local dev)* |
+| `BOOKING_SLOT_MINUTES` | `45` |
+| `BOOKING_GRID_MINUTES` | `60` |
+| `BOOKING_DAY_START` | `11` |
+| `BOOKING_DAY_END` | `19` |
+| `BOOKING_LEAD_DAYS` | `1` |
+| `BOOKING_WINDOW_DAYS` | `14` |
+| `BOOKING_CLOSED_DAYS` | `0` (Sunday) |
+| `BOOKING_TZ_OFFSET` | `+05:00` |
 
 The API key is read only by the server and the ingest scripts — it never reaches the browser.
+
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_REFRESH_TOKEN` are all optional — the app runs without them, just with booking turned off. See [Booking a viewing](#booking-a-viewing) for how to set them, and DEPLOY.md for why `SESSION_SECRET` must not be left unset once the app is deployed.

@@ -56,7 +56,29 @@ Why these flags:
 | `--allow-unauthenticated` | Public demo. Remove it to require IAM. |
 | no `--port` | Cloud Run injects `PORT=8080` and `config.ts` already reads it. |
 
-## 4. Verify the deployment
+## 4. Google Calendar
+
+Viewing bookings need their own OAuth client in the same project, alongside the Vectara setup above:
+
+1. Enable the **Google Calendar API** (`gcloud services enable calendar-json.googleapis.com`, or via the console).
+2. Create an OAuth client, type **Web application**.
+3. Add authorised redirect URIs: `http://localhost:5858/callback` (`connect:calendar`, run locally), `http://localhost:5173/api/auth/google/callback` (buyer sign-in in local dev), and `<PUBLIC_BASE_URL>/api/auth/google/callback` (buyer sign-in in production).
+4. On the OAuth consent screen, add the `.../auth/calendar.events` scope and add yourself as a test user. Leaving the screen in Testing status is fine for a demo project; the trade-off is a refresh token that expires after 7 days instead of running indefinitely.
+5. Run `npm run connect:calendar` **locally** to mint the refresh token — it opens a browser consent flow against `localhost:5858`, which only a developer's machine can complete. It must never run against the deployed service; see the warning below.
+
+Carry the results into the deploy command from step 3 by extending its `--set-env-vars` list — `gcloud run deploy` replaces the whole list on every call, so add these alongside the existing ones rather than passing a second `--set-env-vars` flag:
+
+```bash
+--set-env-vars VECTARA_BASE_URL=...,VECTARA_CORPUS_KEY=...,VECTARA_AGENT_KEY=...,GOOGLE_CLIENT_ID=...,GOOGLE_CLIENT_SECRET=...,GOOGLE_REFRESH_TOKEN=...,PUBLIC_BASE_URL=https://<service-url>,SESSION_SECRET=...
+```
+
+`PUBLIC_BASE_URL` needs the Cloud Run URL, which is only known after the first deploy — fetch it the same way step 5 does (`gcloud run services describe zameen-ai-agent --region asia-south1 --format='value(status.url)'`) and redeploy once more with it set.
+
+**Set `SESSION_SECRET` explicitly — do not leave a deployed environment to the default.** Cloud Run's scale-to-zero means routine cold starts, and more than one instance can be running at once; left unset, each boot mints its own random secret (`config.ts` logs a warning when it does), so a buyer cookie signed by one instance fails verification on another instance, or on the same instance after a cold start — a signed-in buyer silently appears signed out and loses their remembered phone number. Generate a stable value with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` and reuse it across redeploys.
+
+> Buyer sign-in cannot work while the service is private. Google redirects the browser to the callback with no identity token, so the request is rejected before it reaches Express. Until an owner runs the `run.invoker` binding recorded under Deployed instance below, sign-in works in local development only. The estate-agent connection is unaffected, because `connect:calendar` never runs on the deployed service.
+
+## 5. Verify the deployment
 
 ```bash
 URL=$(gcloud run services describe zameen-ai-agent --region asia-south1 --format='value(status.url)') && curl -s "$URL/api/health" && echo && curl -s -o /dev/null -w "shell %{http_code}\n" "$URL/"

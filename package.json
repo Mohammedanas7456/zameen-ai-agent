@@ -28,7 +28,8 @@
     "setup:pipeline": "npm run -w @zameen/ingest setup:pipeline",
     "pipeline:run": "npm run -w @zameen/ingest pipeline:run",
     "pipeline:status": "npm run -w @zameen/ingest pipeline:status",
-    "pipeline:failures": "npm run -w @zameen/ingest pipeline:failures"
+    "pipeline:failures": "npm run -w @zameen/ingest pipeline:failures",
+    "connect:calendar": "npm run -w @zameen/server connect:calendar"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
