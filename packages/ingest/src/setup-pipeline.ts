@@ -219,11 +219,39 @@ async function ensurePipeline(client: VectaraClient): Promise<void> {
         // One hop: index page -> property page.
         max_depth: 1,
         same_domain_only: true,
-        // Unanchored on purpose: the index pages link to properties with
-        // relative hrefs (`/Property/...`), so a pattern anchored to the
-        // absolute URL matches nothing and the crawl never leaves the seeds.
-        pos_regex: ['/Property/'],
-        neg_regex: ['/agencies/', '/agents/', '/new-projects/', '/ur/'],
+        // No pos_regex: it gates which pages are *expanded for links*, not
+        // merely which are kept. Set to '/Property/' it stopped the /Rentals/
+        // and /Homes/ seeds from ever being expanded, so the crawl never left
+        // depth 0.
+        //
+        // That leaves neg_regex to keep the budget on listings. These patterns
+        // are deliberately written without trailing slashes: the real nav links
+        // are '/tools' and '/plots.html', so '/tools/' matches none of them.
+        neg_regex: [
+          '/agencies',
+          '/agents',
+          '/new-projects',
+          '/ur/',
+          '/blog',
+          '/forum',
+          '/news',
+          '/tools',
+          '/trends',
+          '/area-guides',
+          '/society_maps',
+          '/plots',
+          '/commercial',
+          '/index',
+          '/contactus',
+          '/aboutus',
+          '/careers',
+          '/rentals\\.html',
+          '/homes\\.html',
+          // Subdomains: same_domain_only treats these as the same registered
+          // domain, so they have to be excluded by pattern.
+          'profolio\\.zameen\\.com',
+          'expo\\.zameen\\.com',
+        ],
       },
       max_pages: MAX_PAGES,
       // Deliberately gentler than the 2.0 default; robots.txt is honoured too.
