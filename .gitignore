@@ -9,3 +9,4 @@ data/raw/
 .DS_Store
 .vectara-state.json
 coverage/
+.claude/worktrees/
