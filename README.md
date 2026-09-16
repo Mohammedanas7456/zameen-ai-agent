@@ -49,6 +49,7 @@ Open <http://localhost:5173>.
 | `npm run setup:pipeline` | Create/update the daily ingestion pipeline, its transform agent and validator |
 | `npm run pipeline:run` | Trigger an ingestion run now and follow it |
 | `npm run pipeline:status` | Show recent ingestion runs |
+| `npm run pipeline:failures` | Show dead-lettered records, grouped by cause |
 | `npm run dev` | Run API and UI together |
 | `npm test` | Run the test suite |
 
@@ -67,7 +68,12 @@ source:     web / crawl, seeded from the 16 index pages, max_pages 400
 transform:  agent -> validate_listing -> core_document_index (reindex: true)
 ```
 
-`reindex: true` gives upsert semantics, so re-crawling a page replaces its document rather than duplicating it. `first_seen_at` / `last_seen_at` track lifecycle: ingestion is purely additive, but stale listings stay identifiable for a later prune.
+Runs are **additive**: the agent checks `get_document` for `rent-<id>` / `buy-<id>` first and skips anything already in the corpus, so only genuinely new listings cost an extraction and existing documents are never overwritten. `first_seen_at` / `last_seen_at` keep stale listings identifiable for a later prune.
+
+Two things about crawl mode worth knowing before you tune it:
+
+- **`max_pages` is a soft hint**, not a cap — a run configured with 40 fetched 713. The real bound is `max_depth: 1`, which works out to roughly one index page's worth of links per seed. To shrink a run, use fewer seeds rather than a lower `max_pages`.
+- **`pos_regex` gates link *expansion*, not just what is kept.** Setting it to `/Property/` stops the `/Rentals/` and `/Homes/` seeds from ever being expanded, and the crawl never leaves depth 0. It is deliberately unset; `neg_regex` keeps the budget on listings instead — and those patterns must not carry trailing slashes, because the real nav links are `/tools` and `/plots.html`.
 
 **Metadata from the pipeline is LLM-extracted, not parsed**, so it is less reliable than the backfill. `validate_listing` is the guard — it range-checks prices against plausible Karachi bounds, rejects impossible bedroom counts and areas, and constrains every enum. The pipeline's `transform.verification` keys off its `success` flag, so a bad extraction **fails the record instead of entering the corpus**.
 

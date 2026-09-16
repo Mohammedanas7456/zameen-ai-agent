@@ -27,7 +27,8 @@
     "typecheck": "tsc -b --pretty",
     "setup:pipeline": "npm run -w @zameen/ingest setup:pipeline",
     "pipeline:run": "npm run -w @zameen/ingest pipeline:run",
-    "pipeline:status": "npm run -w @zameen/ingest pipeline:status"
+    "pipeline:status": "npm run -w @zameen/ingest pipeline:status",
+    "pipeline:failures": "npm run -w @zameen/ingest pipeline:failures"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

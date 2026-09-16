@@ -9,7 +9,8 @@
     "setup": "tsx src/setup-vectara.ts",
     "setup:pipeline": "tsx src/setup-pipeline.ts",
     "pipeline:run": "tsx src/pipeline-cli.ts run",
-    "pipeline:status": "tsx src/pipeline-cli.ts status"
+    "pipeline:status": "tsx src/pipeline-cli.ts status",
+    "pipeline:failures": "tsx src/pipeline-cli.ts failures"
   },
   "dependencies": {
     "@zameen/shared": "*",

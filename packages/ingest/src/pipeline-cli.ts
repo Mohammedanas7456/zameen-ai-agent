@@ -1,8 +1,9 @@
 /**
  * Operate the ingestion pipeline: trigger a run, watch status, inspect failures.
  *
- *   npm run pipeline:run      -- trigger a run now and follow it
- *   npm run pipeline:status   -- show recent runs
+ *   npm run pipeline:run       -- trigger a run now and follow it
+ *   npm run pipeline:status    -- show recent runs
+ *   npm run pipeline:failures  -- show dead-lettered records and why they failed
  */
 import { config as loadEnv } from 'dotenv';
 import { dirname, join } from 'node:path';
@@ -28,6 +29,23 @@ interface Run {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+interface DeadLetter {
+  source_record_id?: string;
+  status?: string;
+  error_message?: string;
+}
+
+/** Turn a raw error message into a short, groupable cause. */
+function classify(message: string): string {
+  const retryable = message.includes('nonRetryable=false') ? ' (retryable)' : '';
+  if (message.includes('HTTP 500')) return `Vectara Agent API 500 - transient${retryable}`;
+  if (message.includes('Failed to evaluate step transit')) {
+    return `step transition could not be evaluated${retryable}`;
+  }
+  if (message.includes('timeout') || message.includes('Timeout')) return `timeout${retryable}`;
+  return `${message.slice(0, 70)}${retryable}`;
+}
 
 function describe(run: Run): string {
   const counts = [
@@ -123,7 +141,40 @@ async function main() {
     return;
   }
 
-  console.error(`Unknown command "${command}". Use "run" or "status".`);
+  if (command === 'failures') {
+    const { data } = await client.request<{ dead_letters?: DeadLetter[] }>(
+      'GET',
+      `/pipelines/${PIPELINE_KEY}/dead_letters?limit=50`,
+    );
+    const letters = data.dead_letters ?? [];
+    if (letters.length === 0) {
+      console.log(`No failed records for "${PIPELINE_KEY}".`);
+      return;
+    }
+
+    // Group by cause: one transient outage produces many identical entries,
+    // and reading them one by one hides that they are all the same thing.
+    const groups = new Map<string, { count: number; example: string }>();
+    for (const letter of letters) {
+      const cause = classify(letter.error_message ?? '');
+      const group = groups.get(cause);
+      if (group) group.count++;
+      else groups.set(cause, { count: 1, example: letter.source_record_id ?? '' });
+    }
+
+    console.log(`${letters.length} failed record(s) for "${PIPELINE_KEY}":\n`);
+    for (const [cause, { count, example }] of groups) {
+      console.log(`  ${String(count).padStart(3)}x  ${cause}`);
+      if (example) console.log(`        e.g. ${example.slice(0, 96)}`);
+    }
+    console.log(
+      '\nRecords marked retryable are retried on the next run. A validation ' +
+        'failure means the page was read wrong and was deliberately not indexed.',
+    );
+    return;
+  }
+
+  console.error(`Unknown command "${command}". Use "run", "status" or "failures".`);
   process.exit(1);
 }
 
