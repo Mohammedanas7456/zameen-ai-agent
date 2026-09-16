@@ -23,7 +23,7 @@ describe('sanitizeText', () => {
   });
 
   it('strips other control characters', () => {
-    expect(sanitizeText('AsadKhan', 80)).toBe('Asad Khan');
+    expect(sanitizeText('Asad\u0007Khan', 80)).toBe('Asad Khan');
   });
 
   it('clamps to the maximum length', () => {
