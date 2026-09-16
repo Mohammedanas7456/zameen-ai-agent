@@ -552,7 +552,7 @@ export function slotsForWindow(
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run apps/server/src/booking/availability.test.ts`
-Expected: PASS, 19 tests.
+Expected: PASS, 22 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -885,7 +885,7 @@ export function parseCookies(header: string | undefined): Record<string, string>
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run apps/server/src/buyer.test.ts`
-Expected: PASS, 22 tests.
+Expected: PASS, 25 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -2680,7 +2680,7 @@ mountBookingRoutes(app);
 - [ ] **Step 5: Run the full suite**
 
 Run: `npm test`
-Expected: PASS — the new booking route tests plus every pre-existing test.
+Expected: PASS — 12 new booking route tests, plus every pre-existing test (122 at baseline).
 
 - [ ] **Step 6: Commit**
 
@@ -3045,7 +3045,7 @@ export function slotRangeLabel(startIso: string, endIso: string): string {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run apps/web/src/lib/booking.test.ts`
-Expected: PASS, 7 tests.
+Expected: PASS, 6 tests.
 
 - [ ] **Step 5: Add the account chip**
 
