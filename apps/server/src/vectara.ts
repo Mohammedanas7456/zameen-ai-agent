@@ -1,7 +1,7 @@
 import { config } from './config.js';
-import type { Listing, SearchFilters } from '@zameen/shared';
+import type { Listing, Purpose, SearchFilters } from '@zameen/shared';
 import { buildMetadataFilter } from '@zameen/shared';
-import { extractListings } from './listings.js';
+import { extractListings, listingFromMetadata } from './listings.js';
 
 const headers = {
   'x-api-key': config.apiKey,
@@ -96,4 +96,33 @@ export async function streamAgentTurn(sessionKey: string, message: string): Prom
     throw new UpstreamError(`Agent turn failed (HTTP ${res.status}): ${body.slice(0, 200)}`, res.status);
   }
   return res;
+}
+
+/** Vectara document ids are `${purpose}-${externalId}`; anything outside this
+ *  alphabet cannot be one, and would otherwise be interpolated into a URL path. */
+const SAFE_EXTERNAL_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Read one listing straight from the corpus.
+ *
+ * The booking route uses this instead of trusting the browser's copy: without
+ * it, anyone could POST arbitrary text and have it land in the estate agent's
+ * calendar.
+ */
+export async function getListingById(purpose: Purpose, externalId: string): Promise<Listing | null> {
+  if (!SAFE_EXTERNAL_ID.test(externalId)) return null;
+
+  const documentId = `${purpose}-${externalId}`;
+  const res = await fetch(
+    `${config.baseUrl}/corpora/${config.corpusKey}/documents/${encodeURIComponent(documentId)}`,
+    { headers, signal: AbortSignal.timeout(30_000) },
+  );
+
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new UpstreamError(`Could not read listing ${documentId} (HTTP ${res.status})`, res.status);
+  }
+
+  const data = (await res.json().catch(() => ({}))) as { metadata?: Record<string, unknown> };
+  return data.metadata ? listingFromMetadata(data.metadata) : null;
 }
