@@ -143,12 +143,20 @@ export async function fetchUserInfo(accessToken: string): Promise<{ name: string
 
   if (!res.ok) throw new GoogleError(`Could not read the Google profile (HTTP ${res.status})`, res.status);
 
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  const email = typeof data['email'] === 'string' ? data['email'] : '';
-  if (!email) throw new GoogleError('Google returned a profile response with no email', 502);
+  // An unreadable body is a real failure and becomes a GoogleError, so callers
+  // catching that type still see it rather than a raw SyntaxError.
+  const data = (await res.json().catch(() => {
+    throw new GoogleError('Google returned an unreadable profile response', 502);
+  })) as Record<string, unknown>;
 
+  // A *missing email* is not a failure, though. Google's granular consent lets
+  // a buyer grant `profile` and `openid` while declining `email`, so a valid
+  // 200 can legitimately omit it — and rejecting that would fail the whole
+  // sign-in with a "try again" message that retrying cannot fix. Degrade
+  // instead: the booking form asks for an email regardless, which is the same
+  // path an unauthenticated buyer already takes.
   return {
     name: typeof data['name'] === 'string' ? data['name'] : '',
-    email,
+    email: typeof data['email'] === 'string' ? data['email'] : '',
   };
 }

@@ -171,4 +171,13 @@ describe('fetchUserInfo', () => {
     });
     await expect(fetchUserInfo('at')).rejects.toBeInstanceOf(GoogleError);
   });
+
+  it('tolerates a profile with no email rather than failing the whole sign-in', async () => {
+    // Google's granular consent lets a buyer grant `profile` and `openid` while
+    // declining `email`, so this is a legitimate 200 — not an error. Rejecting
+    // it would fail sign-in with a "try again" message retrying cannot fix,
+    // when the booking form asks for an email anyway.
+    stubFetch({ sub: '1', name: 'Asad Khan' });
+    await expect(fetchUserInfo('at')).resolves.toEqual({ name: 'Asad Khan', email: '' });
+  });
 });
