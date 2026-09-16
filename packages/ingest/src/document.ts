@@ -98,6 +98,9 @@ export function toDocument(listing: Listing): CoreDocument {
       cover_photo: listing.coverPhoto ?? '',
       agency: listing.agency ?? '',
       photo_count: listing.photoCount,
+      source_url: listing.sourceUrl || listing.url,
+      first_seen_at: listing.firstSeenAt,
+      last_seen_at: listing.lastSeenAt,
     },
   };
 }
@@ -123,4 +126,7 @@ export const FILTER_ATTRIBUTES = [
   { name: 'floor_num', type: 'integer', description: 'Floor number; 0 ground, -1 unknown.' },
   { name: 'is_verified', type: 'boolean', description: 'Verified by Zameen.' },
   { name: 'listed_at', type: 'integer', description: 'Unix timestamp of listing creation.' },
+  { name: 'source_url', type: 'text', description: 'URL the listing was ingested from.' },
+  { name: 'first_seen_at', type: 'integer', description: 'Unix seconds first ingested.' },
+  { name: 'last_seen_at', type: 'integer', description: 'Unix seconds last seen published.' },
 ] as const;

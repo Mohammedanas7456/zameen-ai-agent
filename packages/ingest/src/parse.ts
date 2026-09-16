@@ -121,8 +121,13 @@ export function coverPhotoUrl(hit: RawHit): string | null {
     : null;
 }
 
-/** Convert one raw Zameen hit into our canonical `Listing`. */
-export function normalizeHit(hit: RawHit, purpose: Purpose): Listing {
+/**
+ * Convert one raw Zameen hit into our canonical `Listing`.
+ *
+ * `seenAt` is the ingestion timestamp; it defaults to now so the backfill path
+ * stamps lifecycle fields the same way the pipeline does.
+ */
+export function normalizeHit(hit: RawHit, purpose: Purpose, seenAt = Math.floor(Date.now() / 1000)): Listing {
   const title = hit.title ?? '';
   const description = hit.shortDescription ?? '';
   const areaSqm = num(hit.area);
@@ -169,5 +174,8 @@ export function normalizeHit(hit: RawHit, purpose: Purpose): Listing {
     photoCount: num(hit.photoCount),
     coverPhoto: coverPhotoUrl(hit),
     listedAt: num(hit.createdAt),
+    sourceUrl: hit.slug ? `https://www.zameen.com/Property/${hit.slug}.html` : '',
+    firstSeenAt: seenAt,
+    lastSeenAt: seenAt,
   };
 }

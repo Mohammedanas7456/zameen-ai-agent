@@ -66,6 +66,9 @@ export function listingFromMetadata(meta: Meta): Listing | null {
     photoCount: int(meta, 'photo_count'),
     coverPhoto: str(meta, 'cover_photo') || null,
     listedAt: int(meta, 'listed_at'),
+    sourceUrl: str(meta, 'source_url'),
+    firstSeenAt: int(meta, 'first_seen_at'),
+    lastSeenAt: int(meta, 'last_seen_at'),
   };
 }
 

@@ -34,6 +34,13 @@ export interface Listing {
   photoCount: number;
   coverPhoto: string | null;
   listedAt: number;
+  /** URL the record was ingested from. Set by the pipeline; '' for backfill. */
+  sourceUrl: string;
+  /** Unix seconds when this listing was first ingested. */
+  firstSeenAt: number;
+  /** Unix seconds when a run last saw this listing still published. Lets stale
+   *  entries be spotted (and pruned later) without another schema change. */
+  lastSeenAt: number;
 }
 
 /** Structured search request. Every field is optional except nothing — an
