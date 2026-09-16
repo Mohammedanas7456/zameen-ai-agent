@@ -41,6 +41,9 @@ const cookieFor = (b: StoredBuyer) => `${BUYER_COOKIE}=${encodeURIComponent(sign
 const meBuyer = async (res: Response): Promise<StoredBuyer | null> =>
   ((await res.json()) as { buyer: StoredBuyer | null }).buyer;
 
+// Import GoogleError for tests that need it
+type GoogleError = import('../google/oauth.js').GoogleError;
+
 describe('GET /api/me', () => {
   it('reports no buyer when there is no cookie', async () => {
     await withServer(async (base) => {
@@ -137,6 +140,85 @@ describe('GET /api/auth/google/callback', () => {
         via: 'google',
       });
     });
+  });
+
+  it('returns 502 when a GoogleError occurs during token exchange', async () => {
+    const realFetch = globalThis.fetch;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.startsWith('http://127.0.0.1')) return realFetch(input, init);
+        // Simulate a Google token endpoint failure that produces a GoogleError
+        if (url.includes('oauth2.googleapis.com/token')) {
+          return {
+            ok: false,
+            status: 401,
+            json: async () => ({ error: 'unauthorized_client' }),
+            text: async (): Promise<string> => '',
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ access_token: 'at', expires_in: 3599 }),
+          text: async (): Promise<string> => '',
+        };
+      }),
+    );
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await withServer(async (base) => {
+        const nonce = 'b'.repeat(32);
+        const stateCookie = `zameen_oauth_state=${encodeURIComponent(sign({ n: nonce }, config.sessionSecret))}`;
+
+        const res = await fetch(`${base}/api/auth/google/callback?code=xyz&state=${nonce}`, {
+          redirect: 'manual',
+          headers: { Cookie: stateCookie },
+        });
+
+        expect(res.status).toBe(502);
+        const body = (await res.json()) as { error: string };
+        expect(body.error).toBe('Google sign-in failed. Please try again.');
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('returns 500 when a non-GoogleError is thrown in the callback', async () => {
+    const realFetch = globalThis.fetch;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.startsWith('http://127.0.0.1')) return realFetch(input, init);
+        // Reject with a plain Error, not a GoogleError
+        throw new Error('Network timeout');
+      }),
+    );
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await withServer(async (base) => {
+        const nonce = 'c'.repeat(32);
+        const stateCookie = `zameen_oauth_state=${encodeURIComponent(sign({ n: nonce }, config.sessionSecret))}`;
+
+        const res = await fetch(`${base}/api/auth/google/callback?code=abc&state=${nonce}`, {
+          redirect: 'manual',
+          headers: { Cookie: stateCookie },
+        });
+
+        expect(res.status).toBe(500);
+        const body = (await res.json()) as { error: string };
+        expect(body.error).toBe('Sign-in could not be completed.');
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

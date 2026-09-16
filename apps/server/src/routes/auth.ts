@@ -9,7 +9,7 @@ import {
   type StoredBuyer,
 } from '../buyer.js';
 import { config } from '../config.js';
-import { BUYER_SCOPES, authUrl, exchangeCode, fetchUserInfo } from '../google/oauth.js';
+import { BUYER_SCOPES, authUrl, exchangeCode, fetchUserInfo, GoogleError } from '../google/oauth.js';
 import { isBookingEnabled } from '../google/tokens.js';
 
 const THIRTY_DAYS_MS = 30 * 24 * 3600 * 1000;
@@ -98,8 +98,13 @@ export function mountAuthRoutes(app: Express): void {
         via: 'google',
       });
       res.redirect('/');
-    } catch {
-      res.status(502).json({ error: 'Google sign-in failed. Please try again.' });
+    } catch (err) {
+      console.error('OAuth callback failed:', err);
+      if (err instanceof GoogleError) {
+        res.status(502).json({ error: 'Google sign-in failed. Please try again.' });
+      } else {
+        res.status(500).json({ error: 'Sign-in could not be completed.' });
+      }
     }
   });
 
