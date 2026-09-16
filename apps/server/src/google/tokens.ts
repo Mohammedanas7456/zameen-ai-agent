@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config, ROOT } from '../config.js';
 import { CalendarDisconnectedError, refreshAccessToken } from './oauth.js';
@@ -55,6 +55,7 @@ export function readRefreshToken(): string {
 
 export function writeRefreshToken(token: string): void {
   writeFileSync(TOKEN_FILE, `${JSON.stringify({ refresh_token: token }, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(TOKEN_FILE, 0o600);
 }
 
 export function googleCredentials(): GoogleCreds {

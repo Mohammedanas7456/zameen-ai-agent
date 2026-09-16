@@ -27,9 +27,24 @@ export const config = {
   /** Origin the browser reaches this app on. Used to build OAuth redirect
    *  URIs, so it must match what is registered in the Google console. */
   publicBaseUrl: (process.env['PUBLIC_BASE_URL'] ?? 'http://localhost:5173').replace(/\/+$/, ''),
-  /** Signs the buyer identity cookie. A generated secret is fine to run with —
-   *  it just means cookies do not survive a restart. */
-  sessionSecret: process.env['SESSION_SECRET'] ?? randomBytes(32).toString('hex'),
+  /** Signs the buyer identity cookie. A generated secret is fine to run with locally —
+   *  but in deployed environments (such as Google Cloud Run), where instances can scale to zero
+   *  and multiple instances run concurrently, cookies signed by one instance will fail verification
+   *  on another instance or after a cold start, causing buyers to appear signed out. */
+  sessionSecret: (() => {
+    const secret = process.env['SESSION_SECRET'];
+    if (!secret) {
+      if (process.env['NODE_ENV'] !== 'test') {
+        console.warn(
+          'SESSION_SECRET is not set. A random per-boot secret is in use. ' +
+          'Sign-ins will not survive a restart or span multiple instances. ' +
+          'Set SESSION_SECRET in any deployed environment.'
+        );
+      }
+      return randomBytes(32).toString('hex');
+    }
+    return secret;
+  })(),
   google: {
     clientId: process.env['GOOGLE_CLIENT_ID'] ?? '',
     clientSecret: process.env['GOOGLE_CLIENT_SECRET'] ?? '',
