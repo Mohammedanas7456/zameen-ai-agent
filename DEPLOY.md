@@ -105,15 +105,15 @@ service account access, switch back by redeploying with
 `--set-secrets VECTARA_API_KEY=vectara-api-key:latest` and dropping the key from
 `--set-env-vars`.
 
-**The service is private.** `--allow-unauthenticated` could not be applied because
-`run.services.setIamPolicy` also needs owner. An owner can open it with:
+**The service is public.** `--allow-unauthenticated` failed at deploy time because
+`run.services.setIamPolicy` needs owner, and was applied afterwards once owner was
+granted:
 
 ```bash
 gcloud run services add-iam-policy-binding zameen-ai-agent --region=asia-south1 --member=allUsers --role=roles/run.invoker
 ```
 
-Until then, reach it with an identity token:
-
-```bash
-curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" https://zameen-ai-agent-agklzgshpq-el.a.run.app/api/health
-```
+Note that granting project Owner to a Gmail account on a project with no
+organization sends an email invitation which must be accepted before the role
+takes effect — and if Editor is replaced rather than added alongside, the account
+has no access at all until then.
