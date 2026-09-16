@@ -93,6 +93,11 @@ export default function App() {
     ]);
   }, []);
 
+  // Memoize to prevent the focus-trap effect from re-running on every App render.
+  // App re-renders once per streamed chat token, which would otherwise tear down and
+  // re-run the modal's focus effect many times per second, silently stealing focus.
+  const closeBooking = useCallback(() => setBooking(null), []);
+
   const handleSend = useCallback(
     async (text: string) => {
       if (!sessionKey) {
@@ -223,7 +228,7 @@ export default function App() {
         <BookingModal
           listing={booking}
           me={me}
-          onClose={() => setBooking(null)}
+          onClose={closeBooking}
           onBooked={handleBooked}
         />
       )}
