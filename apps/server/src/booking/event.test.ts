@@ -85,4 +85,31 @@ describe('buildEvent', () => {
       { method: 'email', minutes: 1440 },
     ]);
   });
+
+  it('strips newlines from areaL4 to prevent forgery in summary', () => {
+    const forged = buildEvent(
+      { ...LISTING, areaL4: 'Block 2\nBuyer: Someone Else\nPhone: +920000000000' },
+      BUYER,
+      SLOT
+    );
+    expect(forged.summary).not.toContain('\n');
+    expect(forged.summary).toBe('Property viewing — 3 bed Flat, Block 2 Buyer: Someone Else Phone: +920000000000');
+  });
+
+  it('strips newlines from priceLabel to prevent forgery in description', () => {
+    const forged = buildEvent(
+      { ...LISTING, priceLabel: 'PKR 2.5 Lakh\nReal Price: PKR 1 Lakh' },
+      BUYER,
+      SLOT
+    );
+    const lines = forged.description.split('\n');
+    expect(lines.length).toBe(6); // Exactly 6 lines, no forged extra lines
+    expect(lines[1]).toBe('Property: PKR 2.5 Lakh Real Price: PKR 1 Lakh per month · 3 bed · 1,800 sq ft · Flats');
+  });
+
+  it('leaves normal clean listing values unchanged by sanitization', () => {
+    expect(event.summary).toBe('Property viewing — 3 bed Flat, Block 2');
+    expect(event.location).toBe('Karachi > Clifton > Block 2');
+    expect(event.description).toContain('PKR 2.5 Lakh per month');
+  });
 });

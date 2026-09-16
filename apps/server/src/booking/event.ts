@@ -1,4 +1,5 @@
 import type { BuyerDetails, Listing } from '@zameen/shared';
+import { sanitizeText } from '../buyer.js';
 
 /** Paired with BookingConfig.tzOffset. The dateTime strings already carry the
  *  offset, which is what Google actually uses; this is for display. */
@@ -26,7 +27,11 @@ const SINGULAR: Record<string, string> = {
 };
 
 function place(listing: Listing): string {
-  return listing.areaL4 || listing.areaL3 || listing.areaL5 || listing.city;
+  const areaL4 = sanitizeText(listing.areaL4, 100);
+  const areaL3 = sanitizeText(listing.areaL3, 100);
+  const areaL5 = sanitizeText(listing.areaL5, 100);
+  const city = sanitizeText(listing.city, 100);
+  return areaL4 || areaL3 || areaL5 || city;
 }
 
 export function buildEvent(
@@ -35,21 +40,27 @@ export function buildEvent(
   slot: { startIso: string; endIso: string },
   timeZone: string = CALENDAR_TIMEZONE,
 ): GoogleEventBody {
-  const type = SINGULAR[listing.propertyType] ?? listing.propertyType;
-  const price = listing.purpose === 'rent' ? `${listing.priceLabel} per month` : listing.priceLabel;
+  const propertyType = sanitizeText(listing.propertyType, 50);
+  const priceLabel = sanitizeText(listing.priceLabel, 100);
+  const areaPath = sanitizeText(listing.areaPath, 200);
+  const city = sanitizeText(listing.city, 100);
+  const url = sanitizeText(listing.url, 500);
+
+  const type = SINGULAR[propertyType] ?? propertyType;
+  const price = listing.purpose === 'rent' ? `${priceLabel} per month` : priceLabel;
 
   const description = [
     `Buyer: ${buyer.name} · ${buyer.email} · ${buyer.phone}`,
-    `Property: ${price} · ${listing.bedrooms} bed · ${listing.areaSqft.toLocaleString('en-US')} sq ft · ${listing.propertyType}`,
-    `Where: ${listing.areaPath || listing.city}`,
-    `Listing: ${listing.url}`,
+    `Property: ${price} · ${listing.bedrooms} bed · ${listing.areaSqft.toLocaleString('en-US')} sq ft · ${propertyType}`,
+    `Where: ${areaPath || city}`,
+    `Listing: ${url}`,
     '',
     'Booked through Zameen AI.',
   ].join('\n');
 
   return {
     summary: `Property viewing — ${listing.bedrooms} bed ${type}, ${place(listing)}`,
-    location: listing.areaPath || listing.city,
+    location: areaPath || city,
     description,
     start: { dateTime: slot.startIso, timeZone },
     end: { dateTime: slot.endIso, timeZone },
