@@ -3,6 +3,7 @@ import {
   AGENT_SCOPES,
   BUYER_SCOPES,
   CalendarDisconnectedError,
+  GoogleError,
   authUrl,
   exchangeCode,
   fetchUserInfo,
@@ -12,11 +13,14 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 /** Stub fetch with one canned response. Returns the spy so the call can be asserted. */
-function stubFetch(body: unknown, init: { ok?: boolean; status?: number } = {}) {
+function stubFetch(
+  body: unknown,
+  init: { ok?: boolean; status?: number; jsonFn?: () => Promise<unknown> } = {},
+) {
   const spy = vi.fn(async () => ({
     ok: init.ok ?? true,
     status: init.status ?? 200,
-    json: async () => body,
+    json: init.jsonFn ?? (async () => body),
     text: async () => JSON.stringify(body),
   }));
   vi.stubGlobal('fetch', spy);
@@ -76,6 +80,21 @@ describe('exchangeCode', () => {
     const result = await exchangeCode({ code: 'a', clientId: 'c', clientSecret: 's', redirectUri: 'u' });
     expect(result.refreshToken).toBeNull();
   });
+
+  it('throws GoogleError when Google returns HTTP 200 with a body that fails to parse as JSON', async () => {
+    stubFetch(null, {
+      ok: true,
+      status: 200,
+      jsonFn: async () => {
+        throw new SyntaxError('Unexpected token');
+      },
+    });
+    const err = await exchangeCode({ code: 'a', clientId: 'c', clientSecret: 's', redirectUri: 'u' }).catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(GoogleError);
+    expect(err).not.toBeInstanceOf(CalendarDisconnectedError);
+  });
 });
 
 describe('refreshAccessToken', () => {
@@ -99,6 +118,15 @@ describe('refreshAccessToken', () => {
     const err = await refreshAccessToken({ refreshToken: 'rt', clientId: 'c', clientSecret: 's' }).catch((e) => e);
     expect(err).not.toBeInstanceOf(CalendarDisconnectedError);
     expect(err.status).toBe(500);
+  });
+
+  it('throws GoogleError when Google returns HTTP 200 with valid JSON that omits access_token', async () => {
+    stubFetch({ expires_in: 3599 });
+    const err = await refreshAccessToken({ refreshToken: 'rt', clientId: 'c', clientSecret: 's' }).catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(GoogleError);
+    expect(err).not.toBeInstanceOf(CalendarDisconnectedError);
   });
 });
 

@@ -66,7 +66,12 @@ async function postToken(body: URLSearchParams): Promise<Record<string, unknown>
   });
 
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (res.ok) return data;
+  if (res.ok) {
+    if (typeof data['access_token'] !== 'string' || data['access_token'] === '') {
+      throw new GoogleError('Google returned a token response with no access_token', 502);
+    }
+    return data;
+  }
 
   if (data['error'] === 'invalid_grant') throw new CalendarDisconnectedError();
   throw new GoogleError(`Google token request failed: ${String(data['error'] ?? res.status)}`, res.status);
