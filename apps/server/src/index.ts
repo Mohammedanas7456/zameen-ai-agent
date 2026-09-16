@@ -7,6 +7,8 @@ import { createSession, searchListings, UpstreamError } from './vectara.js';
 import { handleUserMessage } from './chat.js';
 import { getFacets } from './facets.js';
 import type { ClientEvent } from './sse.js';
+import { mountAuthRoutes } from './routes/auth.js';
+import { mountBookingRoutes } from './routes/booking.js';
 import { mountWebClient } from './static.js';
 
 const app = express();
@@ -94,6 +96,9 @@ app.post('/api/chat', async (req: Request, res: Response) => {
     res.end();
   }
 });
+
+mountAuthRoutes(app);
+mountBookingRoutes(app);
 
 // Mounted last so it can never shadow an /api route above it.
 mountWebClient(app, join(ROOT, 'apps', 'web', 'dist'));
