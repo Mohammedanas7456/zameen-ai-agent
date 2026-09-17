@@ -230,7 +230,7 @@ export default function App() {
           className="flex h-[45vh] shrink-0 border-b lg:h-auto lg:w-[380px] lg:border-b-0 lg:border-r xl:w-[420px]"
           style={{ borderColor: 'var(--border)' }}
         >
-          <div className="flex-1">
+          <div className="min-w-0 flex-1">
             <ChatPanel
               messages={messages}
               onSend={handleSend}
