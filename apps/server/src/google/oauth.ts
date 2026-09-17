@@ -20,6 +20,9 @@ export const AGENT_SCOPES = [
   // catch, because it only appears against a real Google token.
   'https://www.googleapis.com/auth/calendar.freebusy',
   'https://www.googleapis.com/auth/calendar.events',
+  // Only needed once GOOGLE_SHEET_ID is set; requested unconditionally so an
+  // agent who configures a sheet later doesn't need to reconnect.
+  'https://www.googleapis.com/auth/spreadsheets',
 ];
 
 /** The refresh token is gone — revoked, or expired after 7 days because the

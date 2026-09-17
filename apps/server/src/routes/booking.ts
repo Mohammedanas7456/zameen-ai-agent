@@ -5,6 +5,7 @@ import { addDays, isSlotFree, offsetToMs, pktDate, slotsForWindow } from '../boo
 import { fetchBusy, insertEvent } from '../booking/calendar.js';
 import { bookingConfig } from '../booking/config.js';
 import { CALENDAR_TIMEZONE, buildEvent } from '../booking/event.js';
+import { appendBookingRow } from '../booking/sheets.js';
 import { CalendarDisconnectedError, GoogleError } from '../google/oauth.js';
 import { isBookingEnabled } from '../google/tokens.js';
 import { UpstreamError, getListingById } from '../vectara.js';
@@ -121,6 +122,15 @@ export function mountBookingRoutes(app: Express): void {
       }
 
       const created = await insertEvent(buildEvent(listing, validated.buyer, slot));
+
+      // A sheet row is a convenience on top of the calendar event, not a
+      // precondition for the booking — a spreadsheet hiccup must never turn
+      // an otherwise-successful booking into an error for the buyer.
+      try {
+        await appendBookingRow(listing, validated.buyer, slot, created.htmlLink);
+      } catch (err) {
+        console.error('Failed to log booking to sheet:', err);
+      }
 
       // Remember the buyer — including the phone Google will never supply — so
       // a second booking is pre-filled in all three fields.

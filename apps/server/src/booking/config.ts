@@ -15,6 +15,9 @@ export interface BookingConfig {
   /** 0 = Sunday, matching Date#getUTCDay. */
   closedWeekdays: number[];
   calendarId: string;
+  /** Empty string means sheet logging is off — see readBookingConfig. */
+  sheetId: string;
+  sheetRange: string;
 }
 
 type Env = Record<string, string | undefined>;
@@ -58,6 +61,10 @@ export function readBookingConfig(env: Env): BookingConfig {
     windowDays: Math.min(60, intOr(env, 'BOOKING_WINDOW_DAYS', 14)),
     closedWeekdays: weekdaysOr(env, 'BOOKING_CLOSED_DAYS', [0]),
     calendarId: textOr(env, 'GOOGLE_CALENDAR_ID', 'primary'),
+    // Unset by default: booking logging to a sheet is optional and only turns
+    // on once an estate agent supplies one.
+    sheetId: textOr(env, 'GOOGLE_SHEET_ID', ''),
+    sheetRange: textOr(env, 'GOOGLE_SHEET_RANGE', 'Bookings!A:I'),
   };
 }
 

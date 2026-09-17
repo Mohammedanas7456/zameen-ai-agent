@@ -10,10 +10,15 @@ process.env['VECTARA_API_KEY'] ??= 'test-key';
 const fetchBusy = vi.fn();
 const insertEvent = vi.fn();
 const getListingById = vi.fn();
+const appendBookingRow = vi.fn();
 
 vi.mock('../booking/calendar.js', () => ({
   fetchBusy: (...a: unknown[]) => fetchBusy(...a),
   insertEvent: (...a: unknown[]) => insertEvent(...a),
+}));
+
+vi.mock('../booking/sheets.js', () => ({
+  appendBookingRow: (...a: unknown[]) => appendBookingRow(...a),
 }));
 
 // Mocked outright rather than with importActual: the real module imports
@@ -79,6 +84,7 @@ beforeEach(() => {
   fetchBusy.mockReset();
   insertEvent.mockReset();
   getListingById.mockReset();
+  appendBookingRow.mockReset();
 });
 
 describe('GET /api/availability', () => {
@@ -173,6 +179,44 @@ describe('POST /api/bookings', () => {
       expect(((await res.json()) as { booking: unknown }).booking).toMatchObject({
         eventId: 'evt_1', startIso, listingTitle: '3 bed flat', buyerEmail: 'asad@example.com',
       });
+    });
+  });
+
+  it('logs the booking to the sheet after creating the event', async () => {
+    await withServer(async (base) => {
+      const startIso = await firstSlot(base);
+      getListingById.mockResolvedValueOnce(LISTING);
+      fetchBusy.mockResolvedValueOnce([]);
+      insertEvent.mockResolvedValueOnce({ id: 'evt_1', htmlLink: 'https://calendar.google.com/e/1' });
+
+      const res = await post(base, { purpose: 'rent', externalId: '12345', startIso, buyer: BUYER });
+      expect(res.status).toBe(200);
+      expect(appendBookingRow).toHaveBeenCalledWith(
+        LISTING,
+        expect.objectContaining({ email: 'asad@example.com' }),
+        expect.objectContaining({ startIso }),
+        'https://calendar.google.com/e/1',
+      );
+    });
+  });
+
+  it('still returns the booking when logging it to the sheet fails', async () => {
+    await withServer(async (base) => {
+      const startIso = await firstSlot(base);
+      getListingById.mockResolvedValueOnce(LISTING);
+      fetchBusy.mockResolvedValueOnce([]);
+      insertEvent.mockResolvedValueOnce({ id: 'evt_1', htmlLink: 'https://calendar.google.com/e/1' });
+      appendBookingRow.mockRejectedValueOnce(new Error('sheet unreachable'));
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      try {
+        const res = await post(base, { purpose: 'rent', externalId: '12345', startIso, buyer: BUYER });
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as { booking: unknown }).booking).toMatchObject({ eventId: 'evt_1' });
+        expect(spy).toHaveBeenCalledWith('Failed to log booking to sheet:', expect.any(Error));
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 

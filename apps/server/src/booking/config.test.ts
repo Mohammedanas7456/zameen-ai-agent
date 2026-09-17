@@ -13,6 +13,8 @@ describe('readBookingConfig', () => {
       windowDays: 14,
       closedWeekdays: [0],
       calendarId: 'primary',
+      sheetId: '',
+      sheetRange: 'Bookings!A:I',
     });
   });
 
@@ -23,12 +25,16 @@ describe('readBookingConfig', () => {
       BOOKING_SLOT_MINUTES: '30',
       BOOKING_WINDOW_DAYS: '7',
       GOOGLE_CALENDAR_ID: 'viewings@example.com',
+      GOOGLE_SHEET_ID: 'sheet-123',
+      GOOGLE_SHEET_RANGE: 'Viewings!A:Z',
     });
     expect(cfg.dayStartHour).toBe(9);
     expect(cfg.dayEndHour).toBe(17);
     expect(cfg.slotMinutes).toBe(30);
     expect(cfg.windowDays).toBe(7);
     expect(cfg.calendarId).toBe('viewings@example.com');
+    expect(cfg.sheetId).toBe('sheet-123');
+    expect(cfg.sheetRange).toBe('Viewings!A:Z');
   });
 
   it('parses a comma-separated closed-days list', () => {
