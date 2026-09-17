@@ -16,6 +16,21 @@ describe('buildMetadataFilter', () => {
     );
   });
 
+  it('ORs several areas together instead of ANDing them', () => {
+    expect(buildMetadataFilter({ areas: ['Gulshan-e-Iqbal', 'Johar'] })).toBe(
+      "(doc.area_l3_norm = 'gulshan-e-iqbal' OR doc.area_l4_norm = 'gulshan-e-iqbal' " +
+        "OR doc.area_l5_norm = 'gulshan-e-iqbal' OR doc.area_l3_norm = 'johar' " +
+        "OR doc.area_l4_norm = 'johar' OR doc.area_l5_norm = 'johar')",
+    );
+  });
+
+  it('combines `area` and `areas` into one OR group', () => {
+    expect(buildMetadataFilter({ area: 'Clifton', areas: ['Johar'] })).toBe(
+      "(doc.area_l3_norm = 'clifton' OR doc.area_l4_norm = 'clifton' OR doc.area_l5_norm = 'clifton' " +
+        "OR doc.area_l3_norm = 'johar' OR doc.area_l4_norm = 'johar' OR doc.area_l5_norm = 'johar')",
+    );
+  });
+
   it('combines several filters with AND in a stable order', () => {
     expect(
       buildMetadataFilter({ purpose: 'buy', minBedrooms: 3, maxPrice: 25_000_000 }),

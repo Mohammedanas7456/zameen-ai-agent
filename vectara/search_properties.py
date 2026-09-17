@@ -33,6 +33,8 @@ def process(
     Args:
         purpose: Required. 'rent' or 'buy'.
         area: Area, town or society in Karachi, e.g. 'DHA Phase 6', 'Clifton'.
+            Leave empty to search all of Karachi. For more than one area,
+            separate them with a comma, e.g. 'Gulshan-e-Iqbal, Johar'.
         min_bedrooms: Minimum bedrooms. 0 means no minimum.
         max_bedrooms: Maximum bedrooms. 0 means no maximum.
         min_price: Minimum price in PKR (monthly for rent). 0 means no minimum.
@@ -68,7 +70,9 @@ def process(
     criteria = {"purpose": normalised_purpose}
 
     if area and area.strip():
-        criteria["area"] = area.strip()
+        names = [a.strip() for a in area.replace("&", ",").split(",") if a.strip()]
+        if names:
+            criteria["area"] = names[0] if len(names) == 1 else names
 
     min_beds = positive_int(min_bedrooms, "min_bedrooms")
     max_beds = positive_int(max_bedrooms, "max_bedrooms")

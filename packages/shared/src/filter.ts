@@ -41,13 +41,18 @@ export function buildMetadataFilter(filters: SearchFilters): string {
   }
 
   // An area name can live at any of three levels of Zameen's hierarchy
-  // (district / phase / project), so match it against all three.
-  const area = cleanText(filters.area);
-  if (area) {
-    const needle = quote(area.toLowerCase());
-    clauses.push(
-      `(doc.area_l3_norm = ${needle} OR doc.area_l4_norm = ${needle} OR doc.area_l5_norm = ${needle})`,
-    );
+  // (district / phase / project), so match it against all three. Several
+  // areas requested together (`area` plus `areas`) are OR'd into one clause,
+  // so a listing matching *any* of them counts.
+  const areaNames = [filters.area, ...(filters.areas ?? [])]
+    .map((a) => cleanText(a))
+    .filter((a): a is string => a !== null);
+  if (areaNames.length > 0) {
+    const perArea = areaNames.map((name) => {
+      const needle = quote(name.toLowerCase());
+      return `doc.area_l3_norm = ${needle} OR doc.area_l4_norm = ${needle} OR doc.area_l5_norm = ${needle}`;
+    });
+    clauses.push(`(${perArea.join(' OR ')})`);
   }
 
   const propertyType = cleanText(filters.propertyType);

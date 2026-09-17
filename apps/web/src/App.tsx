@@ -183,9 +183,13 @@ export default function App() {
   );
 
   // The agent writes areas lowercase; show the canonical casing in the sidebar.
-  const displayFilters: SearchFilters = filters.area
-    ? { ...filters, area: canonicalArea(filters.area, facets) }
-    : filters;
+  const displayFilters: SearchFilters = {
+    ...filters,
+    ...(filters.area ? { area: canonicalArea(filters.area, facets) } : {}),
+    ...(filters.areas?.length
+      ? { areas: filters.areas.map((a) => canonicalArea(a, facets)) }
+      : {}),
+  };
 
   return (
     <div className="flex h-full flex-col">

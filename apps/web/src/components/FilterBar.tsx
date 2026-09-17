@@ -130,6 +130,13 @@ export function FilterBar({ facets, filters, onChange, onReset, resultCount, bus
           {expanded ? 'Less' : 'More'} filters
         </button>
 
+        {filters.areas && filters.areas.length > 0 && (
+          <p className="w-full text-[11px]" style={{ color: 'var(--muted)' }}>
+            Matching {filters.areas.join(', ')} together — the dropdown above shows only one area
+            at a time.
+          </p>
+        )}
+
         {activeCount > 0 && (
           <button
             onClick={onReset}

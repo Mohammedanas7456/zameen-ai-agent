@@ -74,6 +74,31 @@ describe('criteriaToFilters', () => {
     expect(criteriaToFilters({})).toEqual({});
   });
 
+  it('splits several comma-separated areas into `areas`', () => {
+    expect(criteriaToFilters({ purpose: 'rent', area: 'Gulshan-e-Iqbal, Johar' })).toEqual({
+      purpose: 'rent',
+      areas: ['Gulshan-e-Iqbal', 'Johar'],
+    });
+  });
+
+  it('splits areas joined with "and" or "&"', () => {
+    expect(criteriaToFilters({ purpose: 'rent', area: 'Gulshan and Johar' })).toEqual({
+      purpose: 'rent',
+      areas: ['Gulshan', 'Johar'],
+    });
+    expect(criteriaToFilters({ purpose: 'rent', area: 'Gulshan & Johar' })).toEqual({
+      purpose: 'rent',
+      areas: ['Gulshan', 'Johar'],
+    });
+  });
+
+  it('keeps a single area on `area`, not `areas`', () => {
+    expect(criteriaToFilters({ purpose: 'rent', area: 'Clifton' })).toEqual({
+      purpose: 'rent',
+      area: 'Clifton',
+    });
+  });
+
   it('produces a filter the shared builder accepts', () => {
     const filters = criteriaToFilters({
       purpose: 'rent',
@@ -97,6 +122,12 @@ describe('describeFilters', () => {
 
   it('falls back when nothing is constrained', () => {
     expect(describeFilters({})).toBe('all listings');
+  });
+
+  it('joins several areas with "or"', () => {
+    expect(describeFilters({ purpose: 'rent', areas: ['Gulshan-e-Iqbal', 'Johar'] })).toBe(
+      'for rent, in Gulshan-e-Iqbal or Johar',
+    );
   });
 });
 

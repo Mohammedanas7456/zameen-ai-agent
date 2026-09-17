@@ -49,6 +49,9 @@ export interface SearchFilters {
   purpose?: Purpose;
   /** Free-text area name; matched against L3/L4/L5 case-insensitively. */
   area?: string;
+  /** More than one area requested together (OR'd with `area`), e.g. searching
+   *  "Gulshan and Johar" at once. Each is matched the same way as `area`. */
+  areas?: string[];
   propertyType?: string;
   minBedrooms?: number;
   maxBedrooms?: number;

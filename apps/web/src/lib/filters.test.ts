@@ -17,6 +17,14 @@ describe('filtersFromExpression', () => {
     expect(filtersFromExpression("doc.area_l5_norm = 'clifton'").area).toBe('clifton');
   });
 
+  it('reads several areas as `areas` when more than one is present', () => {
+    const expression =
+      "(doc.area_l3_norm = 'gulshan-e-iqbal' OR doc.area_l4_norm = 'gulshan-e-iqbal' " +
+      "OR doc.area_l5_norm = 'gulshan-e-iqbal' OR doc.area_l3_norm = 'johar' " +
+      "OR doc.area_l4_norm = 'johar' OR doc.area_l5_norm = 'johar')";
+    expect(filtersFromExpression(expression)).toEqual({ areas: ['gulshan-e-iqbal', 'johar'] });
+  });
+
   it('reads a full realistic agent filter', () => {
     const expression =
       "doc.purpose = 'rent' AND (doc.area_l3_norm = 'dha phase 6' OR doc.area_l4_norm = 'dha phase 6') " +
@@ -70,6 +78,11 @@ describe('filtersFromExpression', () => {
       maxPrice: 30_000_000,
       floor: 'ground' as const,
     };
+    expect(filtersFromExpression(buildMetadataFilter(original))).toEqual(original);
+  });
+
+  it('round-trips a multi-area search', () => {
+    const original = { areas: ['gulshan-e-iqbal', 'johar'] };
     expect(filtersFromExpression(buildMetadataFilter(original))).toEqual(original);
   });
 });

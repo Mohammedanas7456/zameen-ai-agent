@@ -15,9 +15,13 @@ export function filtersFromExpression(expression: string): SearchFilters {
   const purpose = expression.match(/doc\.purpose\s*=\s*'(rent|buy)'/);
   if (purpose?.[1]) filters.purpose = purpose[1] as SearchFilters['purpose'];
 
-  // The three area levels all carry the same value, so the first match wins.
-  const area = expression.match(/doc\.area_l[345]_norm\s*=\s*'([^']+)'/);
-  if (area?.[1]) filters.area = area[1];
+  // Each requested area repeats across its three levels, so dedupe the
+  // matches; more than one distinct name means several areas were searched
+  // together.
+  const areaMatches = [...expression.matchAll(/doc\.area_l[345]_norm\s*=\s*'([^']+)'/g)];
+  const areaNames = [...new Set(areaMatches.map((m) => m[1]).filter((v): v is string => v !== undefined))];
+  if (areaNames.length === 1) filters.area = areaNames[0];
+  else if (areaNames.length > 1) filters.areas = areaNames;
 
   const type = expression.match(/doc\.property_type_norm\s*=\s*'([^']+)'/);
   if (type?.[1]) filters.propertyType = type[1];

@@ -28,6 +28,19 @@ function text(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+/** The agent packs several areas into one string, e.g. "Gulshan, Johar" or
+ *  "Gulshan and Johar" — split on the delimiters it's told to use. */
+const AREA_SPLIT = /\s*(?:,|&|\band\b)\s*/i;
+
+function areaNames(value: unknown): string[] {
+  const raw = text(value);
+  if (!raw) return [];
+  return raw
+    .split(AREA_SPLIT)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
 /**
  * Convert the agent's tool arguments into our `SearchFilters`.
  *
@@ -44,8 +57,9 @@ export function criteriaToFilters(criteria: AgentCriteria): SearchFilters {
   const purpose = text(criteria.purpose)?.toLowerCase();
   if (purpose === 'rent' || purpose === 'buy') filters.purpose = purpose;
 
-  const area = text(criteria.area);
-  if (area) filters.area = area;
+  const areas = areaNames(criteria.area);
+  if (areas.length === 1) filters.area = areas[0];
+  else if (areas.length > 1) filters.areas = areas;
 
   const propertyType = text(criteria.property_type);
   if (propertyType) filters.propertyType = propertyType;
@@ -92,7 +106,8 @@ export function criteriaToFilters(criteria: AgentCriteria): SearchFilters {
 export function describeFilters(filters: SearchFilters): string {
   const parts: string[] = [];
   if (filters.purpose) parts.push(filters.purpose === 'rent' ? 'for rent' : 'for sale');
-  if (filters.area) parts.push(`in ${filters.area}`);
+  if (filters.areas?.length) parts.push(`in ${filters.areas.join(' or ')}`);
+  else if (filters.area) parts.push(`in ${filters.area}`);
   if (filters.propertyType) parts.push(filters.propertyType.toLowerCase());
   if (filters.minBedrooms) parts.push(`${filters.minBedrooms}+ beds`);
   if (filters.maxPrice) parts.push(`under PKR ${filters.maxPrice.toLocaleString('en-US')}`);
