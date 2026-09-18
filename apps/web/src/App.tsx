@@ -7,6 +7,7 @@ import { FilterBar } from './components/FilterBar.js';
 import { ResultsGrid } from './components/ResultsGrid.js';
 import { createSession, getFacets, searchListings, streamChat } from './lib/api.js';
 import { getMe, signOut, slotRangeLabel, type Me } from './lib/booking.js';
+import { deleteSession, loadSessions, saveSession, type StoredSession } from './lib/chat-history.js';
 import { GREETING, type ChatMessage } from './lib/chat-session.js';
 import { canonicalArea, filtersFromExpression } from './lib/filters.js';
 
@@ -14,6 +15,7 @@ export default function App() {
   const [facets, setFacets] = useState<Facets | null>(null);
   const [sessionKey, setSessionKey] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([GREETING]);
+  const [history, setHistory] = useState<StoredSession[]>(() => loadSessions());
   const [listings, setListings] = useState<Listing[]>([]);
   const [filters, setFilters] = useState<SearchFilters>({});
   const [chatBusy, setChatBusy] = useState(false);
@@ -67,6 +69,37 @@ export default function App() {
       setStartingChat(false);
     }
   }, [startSession]);
+
+  /**
+   * Persist the current transcript to browser-local history once a turn
+   * finishes (never mid-stream, so a long reply isn't re-serialized on every
+   * token). A no-op until the first user message exists, so a fresh or
+   * newly-started chat doesn't clutter the list.
+   */
+  useEffect(() => {
+    if (!sessionKey || chatBusy) return;
+    saveSession(sessionKey, messages);
+    setHistory(loadSessions());
+  }, [sessionKey, messages, chatBusy]);
+
+  /** Reopen a past chat: adopt its session key so new messages continue it. */
+  const handleSelectSession = useCallback((key: string) => {
+    const found = loadSessions().find((s) => s.sessionKey === key);
+    if (!found) return;
+    setSessionKey(found.sessionKey);
+    setMessages(found.messages);
+    setError(null);
+  }, []);
+
+  const handleDeleteSession = useCallback(
+    (key: string) => {
+      deleteSession(key);
+      setHistory(loadSessions());
+      // The active chat was deleted out from under itself — start clean.
+      if (key === sessionKey) void handleNewChat();
+    },
+    [sessionKey, handleNewChat],
+  );
 
   /** Sidebar-driven search: deterministic, no LLM. */
   const runFilterSearch = useCallback(async (next: SearchFilters) => {
@@ -238,6 +271,10 @@ export default function App() {
               busy={chatBusy}
               startingChat={startingChat}
               error={error}
+              history={history}
+              activeSessionKey={sessionKey}
+              onSelectSession={handleSelectSession}
+              onDeleteSession={handleDeleteSession}
             />
           </div>
         </section>

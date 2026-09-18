@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { ChatHistorySidebar } from './ChatHistorySidebar.js';
+import type { StoredSession } from '../lib/chat-history.js';
 import { canStartNewChat, type ChatMessage } from '../lib/chat-session.js';
 
 interface Props {
@@ -10,6 +12,11 @@ interface Props {
   /** A replacement session is being minted. */
   startingChat: boolean;
   error: string | null;
+  /** Past chats, most-recently-updated first. */
+  history: StoredSession[];
+  activeSessionKey: string | null;
+  onSelectSession: (sessionKey: string) => void;
+  onDeleteSession: (sessionKey: string) => void;
 }
 
 const SUGGESTIONS = [
@@ -87,8 +94,20 @@ function ActivityChip({ query, filter }: { query: string; filter: string }) {
   );
 }
 
-export function ChatPanel({ messages, onSend, onNewChat, busy, startingChat, error }: Props) {
+export function ChatPanel({
+  messages,
+  onSend,
+  onNewChat,
+  busy,
+  startingChat,
+  error,
+  history,
+  activeSessionKey,
+  onSelectSession,
+  onDeleteSession,
+}: Props) {
   const [draft, setDraft] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -123,7 +142,7 @@ export function ChatPanel({ messages, onSend, onNewChat, busy, startingChat, err
   };
 
   return (
-    <div className="flex h-full flex-col" style={{ background: 'var(--panel)' }}>
+    <div className="relative flex h-full flex-col" style={{ background: 'var(--panel)' }}>
       <div
         className="flex items-center gap-2 border-b px-4 py-2"
         style={{ borderColor: 'var(--border)' }}
@@ -134,6 +153,18 @@ export function ChatPanel({ messages, onSend, onNewChat, busy, startingChat, err
         >
           Chat
         </h2>
+        <button
+          type="button"
+          onClick={() => setHistoryOpen(true)}
+          aria-label="View chat history"
+          title="Previous chats"
+          className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition
+                     hover:border-brand-500 hover:text-brand-700 dark:hover:text-brand-300"
+          style={{ borderColor: 'var(--border)', color: 'var(--muted)' }}
+        >
+          <span aria-hidden="true">⏱</span>
+          History
+        </button>
         <button
           type="button"
           onClick={startNewChat}
@@ -149,6 +180,19 @@ export function ChatPanel({ messages, onSend, onNewChat, busy, startingChat, err
           New chat
         </button>
       </div>
+
+      {historyOpen && (
+        <ChatHistorySidebar
+          sessions={history}
+          activeSessionKey={activeSessionKey}
+          onSelect={(key) => {
+            onSelectSession(key);
+            setHistoryOpen(false);
+          }}
+          onDelete={onDeleteSession}
+          onClose={() => setHistoryOpen(false)}
+        />
+      )}
 
       <div className="scroll-slim flex-1 space-y-3 overflow-y-auto p-4">
         {messages.map((m) => {
