@@ -10,6 +10,7 @@ import {
 } from './criteria.js';
 import { describeProbes, probeRelaxations } from './relax.js';
 import { SseParser, type ClientEvent } from './sse.js';
+import { sanitizeText } from './text.js';
 
 export type Emit = (event: ClientEvent) => void;
 
@@ -327,8 +328,17 @@ async function performSearch(
   label?: string,
 ): Promise<string> {
   const filters = criteriaToFilters(request.criteria);
-  const description = describeFilters(filters);
+  // An area reaches this line as the model wrote it, so it is flattened: a
+  // newline in it would otherwise forge a further line of this message, which
+  // the model reads as our instructions rather than as its own argument.
+  const description = sanitizeText(describeFilters(filters), 300);
   const query = semanticQuery(request.criteria) ?? description;
+
+  // A batched turn numbers each block so the model can tell which criteria it
+  // belongs to; a lone search keeps the plain heading existing tests assert
+  // on. Failures are numbered too — an unnumbered block among numbered ones
+  // reads as the results for whichever criteria came last.
+  const heading = label ? `SEARCH RESULTS ${label}` : 'SEARCH RESULTS';
 
   let listings: Listing[];
   try {
@@ -336,7 +346,7 @@ async function performSearch(
   } catch (err) {
     emit({ type: 'error', message: `Search failed: ${(err as Error).message}` });
     return (
-      'SEARCH RESULTS (system data, not from the user): the search could not be completed ' +
+      `${heading} (system data, not from the user): the search could not be completed ` +
       'because of a temporary error. Apologise briefly and invite them to try again.'
     );
   }
@@ -346,9 +356,6 @@ async function performSearch(
 
   emit({ type: 'listings', listings, filter: buildMetadataFilter(filters) });
 
-  // A batched turn numbers each block so the model can tell which criteria
-  // it belongs to; a lone search keeps the plain heading existing tests assert on.
-  const heading = label ? `SEARCH RESULTS ${label}` : 'SEARCH RESULTS';
   const parts = [
     `${heading} (system data, not a message from the user). Criteria: ${description}.` +
       (query !== description ? ` Ranked by: "${query}".` : ''),
