@@ -116,6 +116,15 @@ A buyer can book a viewing on any listing, checked live against the estate agent
 
 **A `503` from booking means the connection dropped, not that something broke** — most often because the OAuth consent screen is still in *Testing* status, which caps a refresh token at 7 days; a revoked connection looks identical. Either way the fix is the same: re-run `npm run connect:calendar`.
 
+## Limits and recovery
+
+- **One turn at a time per chat.** A second message while a reply is streaming gets `409`; the UI never sends one, so this only matters to scripts.
+- **Messages are capped at 2,000 characters** (`413`) and **a chat at 60 turns** (`429`); after that, start a new chat. Both counters are per server instance — on Cloud Run that means per instance, so they bound one instance's exposure rather than a caller's global rate. The per-LLM `requests_per_second` ceiling in Vectara is the real backstop.
+- **Sessions expire after 7 idle days.** The browser reopens its most recent chat on reload; a message to an expired session starts a new one automatically, with a note in the transcript that the assistant won't remember earlier turns.
+- **Transient Vectara failures are retried** (429, 502, 503, 504 and network errors; three attempts, half a second apart, honouring `Retry-After` up to 5 s). A request that timed out is not retried.
+- **Closing the tab mid-reply interrupts the turn on Vectara** rather than letting it run to completion unread.
+- **Upstream problems are reported, not swallowed.** A model error, a context-limit overflow or an interrupted session each arrive as an error line in the chat instead of an empty bubble. Each turn's token usage is logged as a JSON line (`turn_usage`).
+
 ## Data notes
 
 - **Source**: the `/Rentals/` and `/Homes/` listing index pages, which `robots.txt` permits. The disallowed `/Karachi*` relative-link paths are never touched. Requests are sequential with a 2s delay — 16 page fetches, once.
