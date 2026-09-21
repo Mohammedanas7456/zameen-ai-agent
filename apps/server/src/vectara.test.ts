@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { getListingById } from './vectara.js';
+import { getListingById, searchListings } from './vectara.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -53,5 +53,32 @@ describe('getListingById', () => {
   it('raises on an unexpected upstream failure rather than pretending the listing is gone', async () => {
     stubFetch({ error: 'boom' }, { ok: false, status: 500 });
     await expect(getListingById('rent', '12345')).rejects.toThrow(/HTTP 500/);
+  });
+});
+
+describe('searchListings', () => {
+  it('sends the exact filter, the ranking query, and a small keyword blend', async () => {
+    const spy = stubFetch({ search_results: [{ document_metadata: METADATA }] });
+    const listings = await searchListings({ purpose: 'rent', area: 'Clifton' }, 'sea facing');
+
+    expect(listings.map((l) => l.externalId)).toEqual(['12345']);
+    const init = (spy.mock.calls[0] as unknown[] | undefined)?.[1] as { body: string } | undefined;
+    const body = JSON.parse(init?.body ?? '{}') as {
+      query: string;
+      search: { metadata_filter?: string; lexical_interpolation: number; limit: number };
+    };
+    expect(body.query).toBe('sea facing');
+    expect(body.search.metadata_filter).toBe("doc.purpose = 'rent' AND (doc.area_l3_norm = 'clifton' OR doc.area_l4_norm = 'clifton' OR doc.area_l5_norm = 'clifton')");
+    expect(body.search.lexical_interpolation).toBe(0.025);
+    expect(body.search.limit).toBe(40);
+  });
+
+  it('falls back to a broad query rather than sending an empty one', async () => {
+    const spy = stubFetch({ search_results: [] });
+    await searchListings({}, '   ');
+    const init = (spy.mock.calls[0] as unknown[] | undefined)?.[1] as { body: string } | undefined;
+    const body = JSON.parse(init?.body ?? '{}') as { query: string; search: Record<string, unknown> };
+    expect(body.query).toBe('property in Karachi');
+    expect(body.search).not.toHaveProperty('metadata_filter');
   });
 });

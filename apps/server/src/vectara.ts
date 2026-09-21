@@ -34,6 +34,13 @@ export async function createSession(name: string): Promise<string> {
 }
 
 /**
+ * Weight of keyword matching in corpus search, 0 = pure neural. Vectara's
+ * suggested starting point; enough for an exact token like a tower name or
+ * "furnished" to count without letting keywords dominate.
+ */
+const LEXICAL_INTERPOLATION = 0.025;
+
+/**
  * Deterministic structured search, bypassing the agent entirely.
  *
  * The sidebar uses this: filters the user set by hand are translated to a
@@ -56,6 +63,7 @@ export async function searchListings(
       query: query.trim() || 'property in Karachi',
       search: {
         ...(metadataFilter ? { metadata_filter: metadataFilter } : {}),
+        lexical_interpolation: LEXICAL_INTERPOLATION,
         limit,
       },
     }),
