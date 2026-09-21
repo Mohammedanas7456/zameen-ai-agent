@@ -1,5 +1,8 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { BuyerDetails } from '@zameen/shared';
+import { sanitizeText } from './text.js';
+
+export { sanitizeText };
 
 export const BUYER_COOKIE = 'zameen_buyer';
 export const STATE_COOKIE = 'zameen_oauth_state';
@@ -11,22 +14,6 @@ export interface StoredBuyer extends BuyerDetails {
 export type ValidationResult =
   | { ok: true; buyer: BuyerDetails }
   | { ok: false; field: 'name' | 'email' | 'phone'; message: string };
-
-/**
- * Flatten a free-text field to a single safe line.
- *
- * Control characters are stripped rather than escaped because these values are
- * interpolated into the calendar event description: without this, a buyer could
- * type a newline and forge convincing extra lines for the estate agent to read.
- */
-export function sanitizeText(value: unknown, max: number): string {
-  if (typeof value !== 'string') return '';
-  return value
-    .replace(/[\x00-\x1F\x7F]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, max);
-}
 
 export function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
