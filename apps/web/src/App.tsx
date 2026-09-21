@@ -243,6 +243,11 @@ export default function App() {
         setError((e as Error).message);
       } finally {
         patch({ streaming: false, activity: null });
+        // A turn that failed — upstream error, context limit, an interruption,
+        // or a session that could not be replaced — leaves a reply with
+        // nothing in it. The error banner is what the user reads; an empty
+        // bubble under it just looks like the assistant went quiet.
+        setMessages((prev) => prev.filter((m) => !(m.id === replyId && m.content === '')));
         setChatBusy(false);
       }
     },
