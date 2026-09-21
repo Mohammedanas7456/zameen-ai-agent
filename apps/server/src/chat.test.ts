@@ -121,6 +121,72 @@ describe('handleUserMessage', () => {
     expect(results).toContain(`Searches remaining for this message: ${MAX_SEARCHES_PER_MESSAGE - 1}.`);
   });
 
+  it('emits tool_start as soon as the lambda accepts the call, before the agent stream closes', async () => {
+    // Unlike `stream()`, this turn's Response body is a live ReadableStream
+    // we feed by hand, so we can pause mid-turn — after the accepted
+    // tool_output but before the stream closes — and check what has already
+    // been emitted. `stream()` hands runTurn the whole scripted turn in one
+    // Response up front, so it cannot tell an emit right after tool_output
+    // apart from one that waits for the stream to end; this can.
+    const encoder = new TextEncoder();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const liveTurn = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+      },
+    });
+    const enqueue = (event: object) =>
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+
+    const streamAgentTurn = vi.fn<(sessionKey: string, message: string) => Promise<Response>>();
+    streamAgentTurn.mockResolvedValueOnce(
+      new Response(liveTurn, { headers: { 'Content-Type': 'text/event-stream' } }),
+    );
+    streamAgentTurn.mockResolvedValueOnce(stream([prose('done')]));
+    const searchListings = vi.fn<Search>(async () => [LISTING]);
+
+    const events: ClientEvent[] = [];
+    const run = handleUserMessage(
+      'sess',
+      '3 bed apartment in DHA Phase 6',
+      (e) => events.push(e),
+      () => false,
+      { streamAgentTurn, searchListings },
+    );
+
+    enqueue(toolInput({ purpose: 'rent', area: 'DHA Phase 6', min_bedrooms: 3, property_type: 'apartment' }));
+    enqueue(
+      accepted({ purpose: 'rent', area: 'DHA Phase 6', min_bedrooms: 3 }, [
+        "'apartment' is not a known property type and was ignored",
+      ]),
+    );
+
+    // The two frames above are already queued; give the loop a couple of
+    // macrotasks to read and process them. The stream stays open — nothing
+    // has been enqueued past tool_output, and controller.close() has not
+    // been called — so `runTurn`'s reader.read() is genuinely still pending.
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    const early = events.find((e) => e.type === 'tool_start');
+    expect(early).toBeDefined();
+    // Nothing downstream of the search has happened yet: the turn's own
+    // stream — let alone the results turn — has not closed.
+    expect(events.some((e) => e.type === 'listings')).toBe(false);
+
+    // Finish this turn's stream, then let the results turn run to completion.
+    enqueue(prose('Searching now.'));
+    controller.close();
+    await run;
+
+    expect(events.filter((e) => e.type === 'tool_start')).toHaveLength(1);
+    const start = events.find((e) => e.type === 'tool_start') as { filter: string };
+    // Built from the lambda's normalised criteria, not the raw arguments:
+    // the rejected property_type never reaches the filter.
+    expect(start.filter).not.toContain('property_type');
+    expect(events.some((e) => e.type === 'listings')).toBe(true);
+  });
+
   it('falls back to the raw arguments when the lambda itself failed', async () => {
     const h = harness([
       [toolInput({ purpose: 'rent', area: 'Clifton' }), toolOutput({ message: 'sandbox timeout' }, true), prose('ok')],
