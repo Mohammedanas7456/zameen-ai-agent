@@ -7,7 +7,7 @@ export type ChatEvent =
   | { type: 'tool_start'; tool: string; query: string; filter: string }
   | { type: 'listings'; listings: Listing[]; filter: string }
   | { type: 'done' }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string; code?: 'upstream' | 'context_limit' | 'interrupted' | 'session_expired' };
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {

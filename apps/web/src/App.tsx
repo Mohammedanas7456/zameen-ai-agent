@@ -43,9 +43,18 @@ export default function App() {
 
   useEffect(() => {
     getFacets().then(setFacets).catch(() => setFacets(null));
-    startSession().catch((e: Error) =>
-      setError(`Could not connect to the assistant: ${e.message}`),
-    );
+    // A reload should land back in the conversation that was open, not in a
+    // fresh one. History is most-recent first; a session that has since
+    // expired on the server is handled when the next message is sent.
+    const recent = loadSessions()[0];
+    if (recent) {
+      setSessionKey(recent.sessionKey);
+      setMessages(recent.messages);
+    } else {
+      startSession().catch((e: Error) =>
+        setError(`Could not connect to the assistant: ${e.message}`),
+      );
+    }
     getMe().then(setMe).catch(() => setMe({ buyer: null, bookingEnabled: false }));
   }, [startSession]);
 
@@ -178,8 +187,9 @@ export default function App() {
       const patch = (update: Partial<ChatMessage>) =>
         setMessages((prev) => prev.map((m) => (m.id === replyId ? { ...m, ...update } : m)));
 
-      try {
-        await streamChat(sessionKey, text, (event) => {
+      let expired = false;
+      const stream = (key: string) =>
+        streamChat(key, text, (event) => {
           switch (event.type) {
             case 'token':
               setMessages((prev) =>
@@ -197,7 +207,8 @@ export default function App() {
               setFilters(filtersFromExpression(event.filter));
               break;
             case 'error':
-              setError(event.message);
+              if (event.code === 'session_expired') expired = true;
+              else setError(event.message);
               break;
             case 'done':
               break;
@@ -205,6 +216,29 @@ export default function App() {
               break;
           }
         });
+
+      try {
+        await stream(sessionKey);
+
+        // The server no longer has this session. Start a new one, say so in
+        // the transcript, and send the message again — once. The assistant
+        // will not remember earlier turns, which is what the note explains.
+        if (expired) {
+          expired = false;
+          const { sessionKey: fresh } = await createSession();
+          setSessionKey(fresh);
+          setMessages((prev) => [
+            ...prev.filter((m) => m.id !== replyId),
+            {
+              id: `sys-expired-${Date.now()}`,
+              role: 'system',
+              content: 'That chat had expired, so a new session was started. The assistant will not remember the earlier messages.',
+            },
+            { id: replyId, role: 'assistant', content: '', streaming: true },
+          ]);
+          await stream(fresh);
+          if (expired) setError('Could not reach the assistant. Please try again.');
+        }
       } catch (e) {
         setError((e as Error).message);
       } finally {
