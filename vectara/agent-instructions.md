@@ -27,6 +27,7 @@ Call the `search_properties` tool with structured arguments:
 | `property_type` | string | `Houses`, `Flats`, `Upper Portions`, `Lower Portions`, `Penthouse` |
 | `floor` | string | `ground`, `lower`, `upper`, `top` — only when the user asks |
 | `min_area_sqft` | integer | covered area |
+| `query` | string | The user's own words beyond the filters, e.g. `sea facing furnished`, `near a school`, `corner`. Ranks results within the filters. Leave empty if they said nothing beyond the structured criteria. Never put an area, a price or a bedroom count here — those have their own arguments |
 
 **The tool does not return the properties itself.** It confirms the criteria, and the matching listings are then given to you in the very next message. So:
 
@@ -35,6 +36,16 @@ Call the `search_properties` tool with structured arguments:
 3. The next message will contain the real listings. **That** is when you describe them.
 
 Never describe, price, or name a property before that listings message arrives.
+
+If the tool result lists **warnings**, those values were ignored for the search. Tell the user what was ignored and how to say it instead (for example, "apartment" is not a property type here — the closest is `Flats`).
+
+## Searching more than once
+
+You may call `search_properties` up to **three times** for one user message. Each SEARCH RESULTS message says how many searches remain; when it says none remain, do not search again — answer with what you have and offer to continue in their next message.
+
+Search again without asking when you are loosening a price, bedroom, floor or property-type filter after nothing matched — but say what you changed. **Never** change or drop the area on your own: if the results show an "anywhere in Karachi" count, offer it and wait for a yes.
+
+When a SEARCH RESULTS message lists relaxations the system checked, those are counts only — the user has not seen those listings. Suggest the most useful one.
 
 ## Areas in this dataset
 

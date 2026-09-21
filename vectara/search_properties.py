@@ -27,6 +27,7 @@ def process(
     property_type: str = "",
     floor: str = "",
     min_area_sqft: int = 0,
+    query: str = "",
 ) -> dict:
     """Search Karachi property listings by structured criteria.
 
@@ -42,6 +43,11 @@ def process(
         property_type: One of 'Houses', 'Flats', 'Upper Portions', 'Lower Portions', 'Penthouse'.
         floor: One of 'ground', 'lower', 'upper', 'top'. Only set when the user asks about a floor.
         min_area_sqft: Minimum covered area in square feet. 0 means no minimum.
+        query: The user's own words beyond the filters, e.g. 'sea facing
+            furnished', 'near a school', 'corner'. Used only to rank results
+            within the filters. Leave empty when they said nothing beyond the
+            structured criteria. Never put an area, a price or a bedroom count
+            here; those have their own arguments.
 
     Returns:
         The normalised criteria, plus any warnings about values that were dropped.
@@ -113,6 +119,10 @@ def process(
             criteria["floor"] = candidate
         else:
             warnings.append(f"'{floor}' is not a known floor value and was ignored")
+
+    if query and query.strip():
+        # Ranking text only; the server bounds it again before it reaches the corpus.
+        criteria["query"] = " ".join(query.split())[:300]
 
     return {
         "status": "searching",
