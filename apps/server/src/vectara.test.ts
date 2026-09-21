@@ -101,9 +101,22 @@ describe('interruptTurn', () => {
     expect(JSON.parse(call[1].body)).toEqual({ type: 'interrupt', stream_response: false });
   });
 
-  it('treats a 400 as the turn having already finished', async () => {
-    stubFetch({ messages: ['Nothing to interrupt, session is not running'] }, { ok: false, status: 400 });
+  it('treats a 400 as the turn having already finished, and drains its body', async () => {
+    const cancel = vi.fn(async () => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 400,
+        body: { cancel },
+        json: async () => ({ messages: ['Nothing to interrupt, session is not running'] }),
+        text: async () => '',
+      })),
+    );
     await expect(interruptTurn('ase_1')).resolves.toBeUndefined();
+    // Same idiom as fetchWithRetry: nobody reads this response, so release
+    // the connection rather than leaving it checked out.
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it('raises on any other failure', async () => {
