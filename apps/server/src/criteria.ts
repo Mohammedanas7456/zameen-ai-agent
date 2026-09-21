@@ -11,6 +11,8 @@ export interface AgentCriteria {
   property_type?: unknown;
   floor?: unknown;
   min_area_sqft?: unknown;
+  /** The user's own words for ranking, e.g. "sea facing". Never a filter. */
+  query?: unknown;
 }
 
 const FLOORS: FloorBucket[] = ['ground', 'lower', 'upper', 'top', 'numbered'];
@@ -33,7 +35,11 @@ function text(value: unknown): string | undefined {
 const AREA_SPLIT = /\s*(?:,|&|\band\b)\s*/i;
 
 function areaNames(value: unknown): string[] {
-  const raw = text(value);
+  // The lambda returns one area as a string and several as a list; the raw
+  // tool input is always the one comma-separated string it was told to send.
+  const raw = Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === 'string').join(',')
+    : text(value);
   if (!raw) return [];
   return raw
     .split(AREA_SPLIT)
@@ -100,6 +106,22 @@ export function criteriaToFilters(criteria: AgentCriteria): SearchFilters {
   }
 
   return filters;
+}
+
+/** Longest ranking query passed to the corpus. */
+const MAX_QUERY_CHARS = 300;
+
+/**
+ * The user's own words for ranking, if the agent passed any.
+ *
+ * This is the one model-supplied value that reaches the corpus as free text
+ * rather than as a validated filter, so it is bounded: a runaway argument
+ * must not become a runaway query.
+ */
+export function semanticQuery(criteria: AgentCriteria): string | undefined {
+  const raw = text(criteria.query);
+  if (!raw) return undefined;
+  return raw.replace(/\s+/g, ' ').slice(0, MAX_QUERY_CHARS);
 }
 
 /** A plain-language echo of what was searched, for the activity chip. */

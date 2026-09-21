@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildMetadataFilter } from '@zameen/shared';
 import type { Listing } from '@zameen/shared';
-import { criteriaToFilters, describeFilters, listingsForAgent } from './criteria.js';
+import { criteriaToFilters, describeFilters, listingsForAgent, semanticQuery } from './criteria.js';
 
 describe('criteriaToFilters', () => {
   it('maps a realistic agent tool call', () => {
@@ -110,6 +110,39 @@ describe('criteriaToFilters', () => {
       "doc.purpose = 'rent' AND (doc.area_l3_norm = 'clifton' OR doc.area_l4_norm = 'clifton' " +
         "OR doc.area_l5_norm = 'clifton') AND doc.bedrooms >= 2 AND doc.price_pkr <= 250000",
     );
+  });
+
+  it('accepts the list of areas the lambda returns for a multi-area search', () => {
+    expect(
+      criteriaToFilters({ purpose: 'rent', area: ['Gulshan-e-Iqbal', 'Gulistan-e-Jauhar'] }),
+    ).toEqual({ purpose: 'rent', areas: ['Gulshan-e-Iqbal', 'Gulistan-e-Jauhar'] });
+  });
+
+  it('treats a one-item area list like a plain area', () => {
+    expect(criteriaToFilters({ purpose: 'rent', area: ['Clifton'] })).toEqual({
+      purpose: 'rent',
+      area: 'Clifton',
+    });
+  });
+
+  it('never turns the ranking query into a filter', () => {
+    expect(criteriaToFilters({ purpose: 'rent', query: 'sea facing' })).toEqual({ purpose: 'rent' });
+  });
+});
+
+describe('semanticQuery', () => {
+  it('returns the query with whitespace collapsed', () => {
+    expect(semanticQuery({ query: '  sea   facing\nflat ' })).toBe('sea facing flat');
+  });
+
+  it('is undefined when absent, blank or not a string', () => {
+    expect(semanticQuery({})).toBeUndefined();
+    expect(semanticQuery({ query: '   ' })).toBeUndefined();
+    expect(semanticQuery({ query: 42 })).toBeUndefined();
+  });
+
+  it('caps the length so a runaway argument cannot become a runaway query', () => {
+    expect(semanticQuery({ query: 'x'.repeat(500) })).toHaveLength(300);
   });
 });
 
