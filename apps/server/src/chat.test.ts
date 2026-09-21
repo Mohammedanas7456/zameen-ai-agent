@@ -16,17 +16,17 @@ function stream(events: object[]): Response {
 
 const prose = (content: string) => ({ type: 'streaming_agent_output', content });
 
-const toolInput = (tool_input: object) => ({
+const toolInput = (tool_input: object, id = 'call-1') => ({
   type: 'tool_input',
-  tool_call_id: 'call-1',
+  tool_call_id: id,
   tool_configuration_name: 'search_properties',
   tool_name: 'search_properties',
   tool_input,
 });
 
-const toolOutput = (tool_output: object, error = false) => ({
+const toolOutput = (tool_output: object, error = false, id = 'call-1') => ({
   type: 'tool_output',
-  tool_call_id: 'call-1',
+  tool_call_id: id,
   tool_configuration_name: 'search_properties',
   tool_name: 'search_properties',
   tool_output,
@@ -34,8 +34,8 @@ const toolOutput = (tool_output: object, error = false) => ({
 });
 
 /** A lambda reply that accepted the call with the given normalised criteria. */
-const accepted = (criteria: object, warnings: string[] = []) =>
-  toolOutput({ status: 'searching', criteria, warnings, note: 'listings follow' });
+const accepted = (criteria: object, warnings: string[] = [], id = 'call-1') =>
+  toolOutput({ status: 'searching', criteria, warnings, note: 'listings follow' }, false, id);
 
 const LISTING = {
   externalId: '12345', title: 'Well kept 3 bed flat', description: '', url: 'https://www.zameen.com/Property/x.html',
@@ -242,6 +242,95 @@ describe('handleUserMessage', () => {
     await h.run();
     expect(h.searchListings).toHaveBeenCalledTimes(1);
     expect(h.searchListings.mock.calls[0]?.[0]).toEqual({ purpose: 'rent', area: 'DHA Phase 6' });
+  });
+
+  it('two accepted calls in one turn run as two searches, in call order', async () => {
+    const h = harness([
+      [
+        toolInput({ purpose: 'rent', area: 'Clifton' }, 'c1'),
+        accepted({ purpose: 'rent', area: 'Clifton' }, [], 'c1'),
+        toolInput({ purpose: 'rent', area: 'DHA Phase 6' }, 'c2'),
+        accepted({ purpose: 'rent', area: 'DHA Phase 6' }, [], 'c2'),
+      ],
+      [prose('Compared.')],
+    ]);
+    await h.run();
+
+    expect(h.searchListings).toHaveBeenCalledTimes(2);
+    expect(h.searchListings.mock.calls[0]?.[0]).toEqual({ purpose: 'rent', area: 'Clifton' });
+    expect(h.searchListings.mock.calls[1]?.[0]).toEqual({ purpose: 'rent', area: 'DHA Phase 6' });
+
+    const starts = h.events.filter((e): e is Extract<ClientEvent, { type: 'tool_start' }> => e.type === 'tool_start');
+    expect(starts).toHaveLength(2);
+    expect(starts[0]?.query).toContain('Clifton');
+    expect(starts[1]?.query).toContain('DHA Phase 6');
+
+    expect(h.events.filter((e) => e.type === 'listings')).toHaveLength(2);
+
+    const results = h.sent()[1]!;
+    expect(results).toContain('SEARCH RESULTS 1 of 2');
+    expect(results).toContain('SEARCH RESULTS 2 of 2');
+    expect(results).toContain(`Searches remaining for this message: ${MAX_SEARCHES_PER_MESSAGE - 2}.`);
+
+    expect(tokens(h.events)).toBe('Compared.');
+  });
+
+  it('a turn that asks for more searches than remain runs only the budget', async () => {
+    const h = harness([
+      [
+        toolInput({ purpose: 'rent', area: 'A' }, 'c1'),
+        accepted({ purpose: 'rent', area: 'A' }, [], 'c1'),
+        toolInput({ purpose: 'rent', area: 'B' }, 'c2'),
+        accepted({ purpose: 'rent', area: 'B' }, [], 'c2'),
+        toolInput({ purpose: 'rent', area: 'C' }, 'c3'),
+        accepted({ purpose: 'rent', area: 'C' }, [], 'c3'),
+        toolInput({ purpose: 'rent', area: 'D' }, 'c4'),
+        accepted({ purpose: 'rent', area: 'D' }, [], 'c4'),
+      ],
+      [prose('done')],
+    ]);
+    await h.run();
+
+    expect(h.searchListings).toHaveBeenCalledTimes(MAX_SEARCHES_PER_MESSAGE);
+    const results = h.sent()[1]!;
+    expect(results).toContain('1 further search(es) you requested in that turn were not run');
+    expect(results).toContain('Searches remaining for this message: 0.');
+    expect(h.streamAgentTurn).toHaveBeenCalledTimes(2);
+  });
+
+  it('a crashed call in a pair still searches on its raw arguments', async () => {
+    const h = harness([
+      [
+        toolInput({ purpose: 'rent', area: 'Clifton' }, 'c1'),
+        accepted({ purpose: 'rent', area: 'Clifton' }, [], 'c1'),
+        toolInput({ purpose: 'rent', area: 'Malir' }, 'c2'),
+        toolOutput({ message: 'sandbox timeout' }, true, 'c2'),
+        prose('ok'),
+      ],
+      [prose('done')],
+    ]);
+    await h.run();
+
+    expect(h.searchListings).toHaveBeenCalledTimes(2);
+    expect(h.searchListings.mock.calls[1]?.[0]).toEqual({ purpose: 'rent', area: 'Malir' });
+  });
+
+  it('the activity chip names the call it announces', async () => {
+    const h = harness([
+      [
+        toolInput({ purpose: 'rent', area: 'Clifton' }, 'c1'),
+        accepted({ purpose: 'rent', area: 'Clifton' }, [], 'c1'),
+        toolInput({ purpose: 'rent', area: 'DHA Phase 6' }, 'c2'),
+        accepted({ purpose: 'rent', area: 'DHA Phase 6' }, [], 'c2'),
+      ],
+      [prose('Compared.')],
+    ]);
+    await h.run();
+
+    const starts = h.events.filter((e): e is Extract<ClientEvent, { type: 'tool_start' }> => e.type === 'tool_start');
+    expect(starts).toHaveLength(2);
+    expect(starts[0]?.filter).toContain('clifton');
+    expect(starts[1]?.filter).toContain('dha phase 6');
   });
 
   it("ranks by the user's own words when the agent passes a query", async () => {

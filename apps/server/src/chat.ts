@@ -65,9 +65,24 @@ interface SearchRequest {
 }
 
 interface TurnResult {
-  search: SearchRequest | null;
+  /** Every accepted call in this turn, in the order each was first seen. */
+  searches: SearchRequest[];
   /** The agent called the tool in a turn that was not allowed to search. */
   ignoredSearch: boolean;
+}
+
+/** One `search_properties` call's state while its turn's stream is still open. */
+interface CallState {
+  /** The model's raw arguments — kept as the crash fallback. */
+  requested: AgentCriteria;
+  /** What the lambda normalised the call to, once its tool_output arrives. */
+  normalised: AgentCriteria | null;
+  warnings: string[];
+  /** Set once this call's activity chip has gone out, so neither a later
+   *  tool_output for the same id (a replaced request) nor the end-of-turn
+   *  fallback ever announces it twice. */
+  started: boolean;
+  toolName: string;
 }
 
 /** Stream one agent turn, forwarding its prose to the client. */
@@ -88,16 +103,16 @@ async function runTurn(
   // `tool_output` (what the lambda made of them). The lambda drops values it
   // does not recognise, so its output is what the search must be built from;
   // the raw arguments are only a fallback for when the lambda itself failed.
-  let requested: AgentCriteria | null = null;
-  let normalised: AgentCriteria | null = null;
-  let warnings: string[] = [];
+  // A turn can carry more than one call, so state is kept per `tool_call_id`,
+  // in the order each id was first seen — a Map preserves that order even
+  // when a later tool_input for the same id replaces its entry's value.
+  const calls = new Map<string, CallState>();
+  let anonymousCalls = 0;
+  let lastCallId: string | null = null;
   let toolName = 'search_properties';
   let ignoredSearch = false;
   let streamedProse = false;
   let forwardProse = true;
-  // Set once the activity chip has been sent, so a second search in the same
-  // turn (or the end-of-turn fallback) never announces the same call twice.
-  let started = false;
 
   while (!isAborted()) {
     const { done, value } = await reader.read();
@@ -138,43 +153,55 @@ async function runTurn(
             ignoredSearch = true;
             break;
           }
-          // A second search_properties call in the same turn is a normal way
-          // to relax a filter; whatever the first call left in normalised/
-          // warnings belongs to a request this one supersedes.
-          requested = input as AgentCriteria;
-          normalised = null;
-          warnings = [];
+          const rawId = event['tool_call_id'];
+          const id = typeof rawId === 'string' && rawId ? rawId : `#${anonymousCalls++}`;
+          lastCallId = id;
           toolName = String(event['tool_configuration_name'] ?? toolName);
+          // A repeat id — the model relaxing its own filter mid-turn — replaces
+          // this call's criteria; `started` carries over so a call whose chip
+          // already went out never gets a second one for the update.
+          const prior = calls.get(id);
+          calls.set(id, {
+            requested: input as AgentCriteria,
+            normalised: null,
+            warnings: [],
+            started: prior?.started ?? false,
+            toolName,
+          });
           break;
         }
 
         case 'tool_output': {
-          if (!requested) break;
+          const rawId = event['tool_call_id'];
+          const id = typeof rawId === 'string' && rawId ? rawId : lastCallId;
+          if (!id) break;
+          const call = calls.get(id);
+          if (!call) break;
           const output = event['tool_output'];
           if (event['error'] === true || !output || typeof output !== 'object') break;
           const out = output as Record<string, unknown>;
           if (out['status'] === 'error') {
             // The lambda refused the call (no purpose, say). The model has its
             // error text and will ask the user, so its prose *is* the reply.
-            requested = null;
+            calls.delete(id);
             forwardProse = true;
             break;
           }
           const criteria = out['criteria'];
-          if (criteria && typeof criteria === 'object') normalised = criteria as AgentCriteria;
+          if (criteria && typeof criteria === 'object') call.normalised = criteria as AgentCriteria;
           if (Array.isArray(out['warnings'])) {
-            warnings = out['warnings'].filter((w): w is string => typeof w === 'string');
+            call.warnings = out['warnings'].filter((w): w is string => typeof w === 'string');
           }
           // Announce the search as soon as its real criteria are known,
           // rather than waiting for the rest of this turn's stream to close —
           // that stream can carry a long "searching now" narration, during
           // which the client would otherwise see nothing happen.
-          if (normalised && !started) {
-            started = true;
-            const filters = criteriaToFilters(normalised);
+          if (call.normalised && !call.started) {
+            call.started = true;
+            const filters = criteriaToFilters(call.normalised);
             emit({
               type: 'tool_start',
-              tool: toolName,
+              tool: call.toolName,
               query: describeFilters(filters),
               filter: buildMetadataFilter(filters),
             });
@@ -190,22 +217,24 @@ async function runTurn(
 
   await reader.cancel().catch(() => {});
 
-  const criteria = normalised ?? requested;
-  if (!criteria) return { search: null, ignoredSearch };
-
-  // Fallback for when no usable tool_output ever arrived (a lambda crash):
-  // the accepted branch above never ran, so this is the first chance to
-  // announce the search, built from the raw arguments instead.
-  if (!started) {
-    const filters = criteriaToFilters(criteria);
-    emit({
-      type: 'tool_start',
-      tool: toolName,
-      query: describeFilters(filters),
-      filter: buildMetadataFilter(filters),
-    });
+  const searches: SearchRequest[] = [];
+  for (const call of calls.values()) {
+    const criteria = call.normalised ?? call.requested;
+    // Fallback for when no usable tool_output ever arrived for this call (a
+    // lambda crash): the accepted branch above never ran, so this is the
+    // first chance to announce it, built from the raw arguments instead.
+    if (!call.started) {
+      const filters = criteriaToFilters(criteria);
+      emit({
+        type: 'tool_start',
+        tool: call.toolName,
+        query: describeFilters(filters),
+        filter: buildMetadataFilter(filters),
+      });
+    }
+    searches.push({ criteria, warnings: call.warnings });
   }
-  return { search: { criteria, warnings }, ignoredSearch };
+  return { searches, ignoredSearch };
 }
 
 /**
@@ -220,6 +249,8 @@ async function performSearch(
   emit: Emit,
   isAborted: () => boolean,
   deps: ChatDeps,
+  /** e.g. "1 of 2", when this search is one of several run for the same turn. */
+  label?: string,
 ): Promise<string> {
   const filters = criteriaToFilters(request.criteria);
   const description = describeFilters(filters);
@@ -241,8 +272,11 @@ async function performSearch(
 
   emit({ type: 'listings', listings, filter: buildMetadataFilter(filters) });
 
+  // A batched turn numbers each block so the model can tell which criteria
+  // it belongs to; a lone search keeps the plain heading existing tests assert on.
+  const heading = label ? `SEARCH RESULTS ${label}` : 'SEARCH RESULTS';
   const parts = [
-    `SEARCH RESULTS (system data, not a message from the user). Criteria: ${description}.` +
+    `${heading} (system data, not a message from the user). Criteria: ${description}.` +
       (query !== description ? ` Ranked by: "${query}".` : ''),
     request.warnings.length > 0 ? `Ignored: ${request.warnings.join('; ')}.` : '',
     listingsForAgent(listings),
@@ -288,19 +322,35 @@ export async function handleUserMessage(
 ): Promise<void> {
   let turn = await runTurn(sessionKey, message, emit, isAborted, deps, SEARCH_TURN);
 
-  for (let used = 0; turn.search && !isAborted(); ) {
-    used += 1;
-    const remaining = MAX_SEARCHES_PER_MESSAGE - used;
-    const results = await performSearch(turn.search, emit, isAborted, deps);
-    if (isAborted()) return;
+  for (let used = 0; turn.searches.length > 0 && !isAborted(); ) {
+    // A turn can ask for more than the message has left; run what the budget
+    // allows, in call order, and tell the model about the rest so it does not
+    // read their absence as the searches simply never having happened.
+    const affordable = Math.max(0, MAX_SEARCHES_PER_MESSAGE - used);
+    const toRun = turn.searches.slice(0, affordable);
+    const skipped = turn.searches.length - toRun.length;
 
+    const blocks: string[] = [];
+    for (const [i, search] of toRun.entries()) {
+      used += 1;
+      const label = toRun.length > 1 ? `${i + 1} of ${toRun.length}` : undefined;
+      blocks.push(await performSearch(search, emit, isAborted, deps, label));
+      if (isAborted()) return;
+    }
+
+    const remaining = MAX_SEARCHES_PER_MESSAGE - used;
     const budget =
       remaining > 0
         ? `Searches remaining for this message: ${remaining}.`
         : 'Searches remaining for this message: 0. Do not call search_properties again; answer with what you have.';
+    const skippedNote =
+      skipped > 0
+        ? `${skipped} further search(es) you requested in that turn were not run: this message's search budget is used up.`
+        : '';
+
     turn = await runTurn(
       sessionKey,
-      `${results}\n\n${budget}`,
+      [blocks.join('\n\n---\n\n'), skippedNote, budget].filter(Boolean).join('\n\n'),
       emit,
       isAborted,
       deps,
