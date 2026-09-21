@@ -81,8 +81,9 @@ export async function searchListings(
 /**
  * Open the agent's SSE stream for one conversation turn.
  *
- * `message` is whatever the agent should react to — either the user's words or,
- * on the second phase of a search, the listings we retrieved for it.
+ * `message` is whatever the agent should react to — the user's words, a
+ * SEARCH RESULTS message with the listings a call retrieved, or the
+ * SEARCH LIMIT message once a user message has used up its searches.
  */
 export async function streamAgentTurn(sessionKey: string, message: string): Promise<Response> {
   const res = await fetch(

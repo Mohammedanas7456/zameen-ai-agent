@@ -7,9 +7,9 @@ object of the built-in corpora_search tool is not model-fillable, and its
 
 The sandbox has no network access and cannot invoke other tools, so this does
 not search anything itself. It validates and normalises the criteria; the
-application backend observes the resulting `tool_input` event, builds the exact
-metadata filter from these same values, runs the query, and feeds the listings
-back to the agent on the following turn.
+application backend observes the resulting `tool_output` event, builds the
+exact metadata filter from these same values, runs the query, and feeds the
+listings back to the agent on the following turn.
 """
 
 PURPOSES = ("rent", "buy")

@@ -265,7 +265,7 @@ async function ensureSearchTool(client: VectaraClient, listings: Listing[], face
     if (remaining > 0) {
       throw new Error(
         `${remaining} old "${SEARCH_TOOL_NAME}" tool(s) could not be deleted — ` +
-          'another agent still references them.',
+          'deletion has not completed yet, or another agent still references them — rerun once it has.',
       );
     }
     console.log(`      removed ${existing.length} previous version(s)`);

@@ -12,3 +12,4 @@ data/raw/
 coverage/
 .claude/worktrees/
 *.tsbuildinfo
+__pycache__/
