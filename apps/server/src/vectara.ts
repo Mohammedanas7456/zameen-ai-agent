@@ -142,8 +142,16 @@ export async function searchListings(
  * `message` is whatever the agent should react to — the user's words, a
  * SEARCH RESULTS message with the listings a call retrieved, or the
  * SEARCH LIMIT message once a user message has used up its searches.
+ *
+ * `signal` is the caller's own abort — the browser having gone away. Joined
+ * to the timeout so an abort reaches the socket immediately: without it, a
+ * read already pending on Vectara's next chunk would keep waiting for it.
  */
-export async function streamAgentTurn(sessionKey: string, message: string): Promise<Response> {
+export async function streamAgentTurn(
+  sessionKey: string,
+  message: string,
+  signal?: AbortSignal,
+): Promise<Response> {
   const res = await fetchWithRetry(
     `${config.baseUrl}/agents/${config.agentKey}/sessions/${sessionKey}/events`,
     {
@@ -154,7 +162,7 @@ export async function streamAgentTurn(sessionKey: string, message: string): Prom
         stream_response: true,
       }),
       // Agent turns can run several tool calls; allow generous headroom.
-      signal: AbortSignal.timeout(300_000),
+      signal: signal ? AbortSignal.any([AbortSignal.timeout(300_000), signal]) : AbortSignal.timeout(300_000),
     },
   );
 
@@ -179,6 +187,10 @@ export async function interruptTurn(sessionKey: string): Promise<void> {
     body: JSON.stringify({ type: 'interrupt', stream_response: false }),
     signal: AbortSignal.timeout(10_000),
   });
+  // Vectara answers 400 with "Nothing to interrupt, session is not running":
+  // the turn finished between the client leaving and this call. That is the
+  // outcome we wanted, not a failure worth logging.
+  if (res.status === 400) return;
   if (!res.ok) throw new UpstreamError(`Interrupt failed (HTTP ${res.status})`, res.status);
 }
 

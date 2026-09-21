@@ -533,4 +533,53 @@ describe('handleUserMessage', () => {
     await h.run();
     expect(h.interruptTurn).not.toHaveBeenCalled();
   });
+
+  it('does not wait for Vectara\'s next chunk once the client has disconnected', async () => {
+    // Without the signal reaching the fetch, this turn never ends: the stream
+    // enqueues one frame and then stalls, so `reader.read()` stays pending and
+    // the loop's `isAborted()` check is never reached again.
+    const encoder = new TextEncoder();
+    const controller = new AbortController();
+    const streamAgentTurn = vi.fn(async (_sessionKey: string, _message: string, signal?: AbortSignal) => {
+      let sentFirst = false;
+      const body = new ReadableStream<Uint8Array>({
+        pull(c) {
+          if (!sentFirst) {
+            sentFirst = true;
+            c.enqueue(encoder.encode(`data: ${JSON.stringify(prose('Thinking'))}\n\n`));
+            return;
+          }
+          // How undici ends a pending read on an aborted response body.
+          return new Promise<void>((_resolve, reject) => {
+            signal?.addEventListener('abort', () => {
+              const err = new Error('This operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          });
+        },
+      });
+      return new Response(body);
+    });
+    const interruptTurn = vi.fn(async () => {});
+    const events: ClientEvent[] = [];
+    const run = handleUserMessage(
+      'sess',
+      'hi',
+      (e) => events.push(e),
+      () => controller.signal.aborted,
+      { streamAgentTurn, searchListings: async () => [], interruptTurn, log: () => {} },
+      controller.signal,
+    );
+
+    await new Promise((r) => setTimeout(r, 0));
+    controller.abort();
+
+    const timer = new Promise((_resolve, reject) => {
+      setTimeout(() => reject(new Error('handleUserMessage did not return after the client left')), 500);
+    });
+    await Promise.race([run, timer]);
+    expect(interruptTurn).toHaveBeenCalledTimes(1);
+    expect(interruptTurn).toHaveBeenCalledWith('sess');
+  });
 });

@@ -101,13 +101,19 @@ app.post('/api/chat', async (req: Request, res: Response) => {
   // This must be `res`, not `req`: the request stream emits 'close' as soon as
   // its body has been read, which is immediately — watching `req` aborts every
   // turn before it starts.
+  //
+  // The flag is what the loop checks between frames; the controller is what
+  // reaches the upstream socket, so a read already waiting on Vectara's next
+  // chunk is cut short rather than delaying the interrupt until it arrives.
   let aborted = false;
+  const controller = new AbortController();
   res.on('close', () => {
     aborted = true;
+    controller.abort();
   });
 
   try {
-    await handleUserMessage(sessionKey, message, send, () => aborted);
+    await handleUserMessage(sessionKey, message, send, () => aborted, undefined, controller.signal);
     send({ type: 'done' });
   } catch (err) {
     // A session Vectara no longer has (expired, or the agent was recreated)

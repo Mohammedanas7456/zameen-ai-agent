@@ -18,7 +18,7 @@ export type Emit = (event: ClientEvent) => void;
  * against a scripted stream instead of a live agent.
  */
 export interface ChatDeps {
-  streamAgentTurn: (sessionKey: string, message: string) => Promise<Response>;
+  streamAgentTurn: (sessionKey: string, message: string, signal?: AbortSignal) => Promise<Response>;
   searchListings: (filters: SearchFilters, query: string, limit?: number) => Promise<Listing[]>;
   /** Stop a turn the client abandoned. Failures are logged, never surfaced. */
   interruptTurn: (sessionKey: string) => Promise<void>;
@@ -104,8 +104,9 @@ async function runTurn(
   isAborted: () => boolean,
   deps: ChatDeps,
   mode: TurnMode,
+  signal?: AbortSignal,
 ): Promise<TurnResult> {
-  const response = await deps.streamAgentTurn(sessionKey, message);
+  const response = await deps.streamAgentTurn(sessionKey, message, signal);
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   const parser = new SseParser();
@@ -127,150 +128,162 @@ async function runTurn(
   let failed = false;
   let streamEnded = false;
 
-  while (!isAborted()) {
-    const { done, value } = await reader.read();
-    if (done) {
-      streamEnded = true;
-      break;
-    }
-
-    for (const frame of parser.push(decoder.decode(value, { stream: true }))) {
-      let event: Record<string, unknown>;
-      try {
-        event = JSON.parse(frame.data) as Record<string, unknown>;
-      } catch {
-        continue; // keep-alives and non-JSON frames
+  try {
+    while (!isAborted()) {
+      const { done, value } = await reader.read();
+      if (done) {
+        streamEnded = true;
+        break;
       }
 
-      const content = typeof event['content'] === 'string' ? event['content'] : '';
-
-      switch (event['type']) {
-        case 'streaming_agent_output':
-          if (content) {
-            streamedProse = true;
-            if (forwardProse) emit({ type: 'token', text: content });
-          }
-          break;
-
-        case 'agent_output':
-          // Non-streamed fallback; only used when nothing streamed, or the
-          // whole reply would appear twice.
-          if (content && !streamedProse) {
-            streamedProse = true;
-            if (forwardProse) emit({ type: 'token', text: content });
-          }
-          break;
-
-        case 'tool_input': {
-          const input = event['tool_input'];
-          if (!input || typeof input !== 'object') break;
-          forwardProse = mode.forwardAfterToolCall;
-          if (!mode.honourSearch) {
-            ignoredSearch = true;
-            break;
-          }
-          const rawId = event['tool_call_id'];
-          const id = typeof rawId === 'string' && rawId ? rawId : `#${anonymousCalls++}`;
-          lastCallId = id;
-          toolName = String(event['tool_configuration_name'] ?? toolName);
-          // A repeat id — the model relaxing its own filter mid-turn — replaces
-          // this call's criteria; `started` carries over so a call whose chip
-          // already went out never gets a second one for the update.
-          const prior = calls.get(id);
-          calls.set(id, {
-            requested: input as AgentCriteria,
-            normalised: null,
-            warnings: [],
-            started: prior?.started ?? false,
-            toolName,
-          });
-          break;
+      for (const frame of parser.push(decoder.decode(value, { stream: true }))) {
+        let event: Record<string, unknown>;
+        try {
+          event = JSON.parse(frame.data) as Record<string, unknown>;
+        } catch {
+          continue; // keep-alives and non-JSON frames
         }
 
-        case 'tool_output': {
-          const rawId = event['tool_call_id'];
-          const id = typeof rawId === 'string' && rawId ? rawId : lastCallId;
-          if (!id) break;
-          const call = calls.get(id);
-          if (!call) break;
-          const output = event['tool_output'];
-          if (event['error'] === true || !output || typeof output !== 'object') break;
-          const out = output as Record<string, unknown>;
-          if (out['status'] === 'error') {
-            // The lambda refused the call (no purpose, say). The model has its
-            // error text and will ask the user, so its prose *is* the reply.
-            calls.delete(id);
-            forwardProse = true;
+        const content = typeof event['content'] === 'string' ? event['content'] : '';
+
+        switch (event['type']) {
+          case 'streaming_agent_output':
+            if (content) {
+              streamedProse = true;
+              if (forwardProse) emit({ type: 'token', text: content });
+            }
             break;
-          }
-          const criteria = out['criteria'];
-          if (criteria && typeof criteria === 'object') call.normalised = criteria as AgentCriteria;
-          if (Array.isArray(out['warnings'])) {
-            call.warnings = out['warnings'].filter((w): w is string => typeof w === 'string');
-          }
-          // Announce the search as soon as its real criteria are known,
-          // rather than waiting for the rest of this turn's stream to close —
-          // that stream can carry a long "searching now" narration, during
-          // which the client would otherwise see nothing happen.
-          if (call.normalised && !call.started) {
-            call.started = true;
-            const filters = criteriaToFilters(call.normalised);
-            emit({
-              type: 'tool_start',
-              tool: call.toolName,
-              query: describeFilters(filters),
-              filter: buildMetadataFilter(filters),
+
+          case 'agent_output':
+            // Non-streamed fallback; only used when nothing streamed, or the
+            // whole reply would appear twice.
+            if (content && !streamedProse) {
+              streamedProse = true;
+              if (forwardProse) emit({ type: 'token', text: content });
+            }
+            break;
+
+          case 'tool_input': {
+            const input = event['tool_input'];
+            if (!input || typeof input !== 'object') break;
+            forwardProse = mode.forwardAfterToolCall;
+            if (!mode.honourSearch) {
+              ignoredSearch = true;
+              break;
+            }
+            const rawId = event['tool_call_id'];
+            const id = typeof rawId === 'string' && rawId ? rawId : `#${anonymousCalls++}`;
+            lastCallId = id;
+            toolName = String(event['tool_configuration_name'] ?? toolName);
+            // A repeat id — the model relaxing its own filter mid-turn — replaces
+            // this call's criteria; `started` carries over so a call whose chip
+            // already went out never gets a second one for the update.
+            const prior = calls.get(id);
+            calls.set(id, {
+              requested: input as AgentCriteria,
+              normalised: null,
+              warnings: [],
+              started: prior?.started ?? false,
+              toolName,
             });
+            break;
           }
-          break;
+
+          case 'tool_output': {
+            const rawId = event['tool_call_id'];
+            const id = typeof rawId === 'string' && rawId ? rawId : lastCallId;
+            if (!id) break;
+            const call = calls.get(id);
+            if (!call) break;
+            const output = event['tool_output'];
+            if (event['error'] === true || !output || typeof output !== 'object') break;
+            const out = output as Record<string, unknown>;
+            if (out['status'] === 'error') {
+              // The lambda refused the call (no purpose, say). The model has its
+              // error text and will ask the user, so its prose *is* the reply.
+              calls.delete(id);
+              forwardProse = true;
+              break;
+            }
+            const criteria = out['criteria'];
+            if (criteria && typeof criteria === 'object') call.normalised = criteria as AgentCriteria;
+            if (Array.isArray(out['warnings'])) {
+              call.warnings = out['warnings'].filter((w): w is string => typeof w === 'string');
+            }
+            // Announce the search as soon as its real criteria are known,
+            // rather than waiting for the rest of this turn's stream to close —
+            // that stream can carry a long "searching now" narration, during
+            // which the client would otherwise see nothing happen.
+            if (call.normalised && !call.started) {
+              call.started = true;
+              const filters = criteriaToFilters(call.normalised);
+              emit({
+                type: 'tool_start',
+                tool: call.toolName,
+                query: describeFilters(filters),
+                filter: buildMetadataFilter(filters),
+              });
+            }
+            break;
+          }
+
+          case 'error': {
+            const messages = Array.isArray(event['messages'])
+              ? event['messages'].filter((m): m is string => typeof m === 'string')
+              : [];
+            emit({
+              type: 'error',
+              code: 'upstream',
+              message: `The assistant hit a problem${messages.length > 0 ? `: ${messages.join('; ')}` : ''}.`,
+            });
+            failed = true;
+            break;
+          }
+
+          case 'context_limit_exceeded':
+            emit({
+              type: 'error',
+              code: 'context_limit',
+              message: 'This conversation has grown too long for the assistant to follow. Start a new chat to continue.',
+            });
+            failed = true;
+            break;
+
+          case 'session_interrupted':
+            emit({ type: 'error', code: 'interrupted', message: 'The reply was interrupted before it finished.' });
+            failed = true;
+            break;
+
+          case 'context_consumed': {
+            // The only per-turn token count Vectara gives us; the bill lives here.
+            const usage = event['session_context_usage'];
+            if (usage && typeof usage === 'object') deps.log({ event: 'turn_usage', sessionKey, usage });
+            break;
+          }
+
+          default:
+            break;
         }
-
-        case 'error': {
-          const messages = Array.isArray(event['messages'])
-            ? event['messages'].filter((m): m is string => typeof m === 'string')
-            : [];
-          emit({
-            type: 'error',
-            code: 'upstream',
-            message: `The assistant hit a problem${messages.length > 0 ? `: ${messages.join('; ')}` : ''}.`,
-          });
-          failed = true;
-          break;
-        }
-
-        case 'context_limit_exceeded':
-          emit({
-            type: 'error',
-            code: 'context_limit',
-            message: 'This conversation has grown too long for the assistant to follow. Start a new chat to continue.',
-          });
-          failed = true;
-          break;
-
-        case 'session_interrupted':
-          emit({ type: 'error', code: 'interrupted', message: 'The reply was interrupted before it finished.' });
-          failed = true;
-          break;
-
-        case 'context_consumed': {
-          // The only per-turn token count Vectara gives us; the bill lives here.
-          const usage = event['session_context_usage'];
-          if (usage && typeof usage === 'object') deps.log({ event: 'turn_usage', sessionKey, usage });
-          break;
-        }
-
-        default:
-          break;
       }
     }
+  } catch (err) {
+    // An aborted fetch rejects the read that was pending on Vectara's next
+    // chunk — that is the client having left, not a failure. `streamEnded`
+    // stays false, so execution falls through to the interrupt below.
+    if ((err as Error).name !== 'AbortError') throw err;
   }
 
   await reader.cancel().catch(() => {});
 
   // The client left while Vectara was still generating. Finishing the turn
   // would only bill for a reply nobody reads.
+  //
+  // Awaited, not fired and forgotten: Cloud Run throttles an instance's CPU
+  // once no request is in flight, so a pending fetch left behind by a handler
+  // that has already returned may never complete. The call carries its own
+  // 10 s timeout, so this cannot hold the request open for long.
   if (isAborted() && !streamEnded) {
-    deps.interruptTurn(sessionKey).catch((err: unknown) => {
+    await deps.interruptTurn(sessionKey).catch((err: unknown) => {
       deps.log({ event: 'interrupt_failed', sessionKey, error: (err as Error).message });
     });
   }
@@ -380,9 +393,12 @@ export async function handleUserMessage(
   emit: Emit,
   isAborted: () => boolean,
   deps: Partial<ChatDeps> = {},
+  /** The client's disconnect, so an abort reaches the upstream socket rather
+   *  than being noticed only between two of Vectara's chunks. */
+  signal?: AbortSignal,
 ): Promise<void> {
   const d: ChatDeps = { ...defaultDeps, ...deps };
-  let turn = await runTurn(sessionKey, message, emit, isAborted, d, SEARCH_TURN);
+  let turn = await runTurn(sessionKey, message, emit, isAborted, d, SEARCH_TURN, signal);
 
   for (let used = 0; turn.searches.length > 0 && !turn.failed && !isAborted(); ) {
     // A turn can ask for more than the message has left; run what the budget
@@ -417,12 +433,13 @@ export async function handleUserMessage(
       isAborted,
       d,
       remaining > 0 ? SEARCH_TURN : LAST_RESULTS_TURN,
+      signal,
     );
   }
 
   // The model asked for a search it was told it could not have. Its
   // acknowledgement was dropped, so give it one text-only turn to answer.
   if (turn.ignoredSearch && !turn.failed && !isAborted()) {
-    await runTurn(sessionKey, SEARCH_LIMIT_MESSAGE, emit, isAborted, d, FINAL_TURN);
+    await runTurn(sessionKey, SEARCH_LIMIT_MESSAGE, emit, isAborted, d, FINAL_TURN, signal);
   }
 }

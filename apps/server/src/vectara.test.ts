@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { createSession, fetchWithRetry, getListingById, retryPolicy, searchListings, streamAgentTurn } from './vectara.js';
+import { UpstreamError, createSession, fetchWithRetry, getListingById, interruptTurn, retryPolicy, searchListings, streamAgentTurn } from './vectara.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -88,6 +88,27 @@ describe('searchListings', () => {
     const body = JSON.parse(init?.body ?? '{}') as { query: string; search: Record<string, unknown> };
     expect(body.query).toBe('property in Karachi');
     expect(body.search).not.toHaveProperty('metadata_filter');
+  });
+});
+
+describe('interruptTurn', () => {
+  it('posts an interrupt event to the session', async () => {
+    const spy = stubFetch({}, { status: 201 });
+    await expect(interruptTurn('ase_1')).resolves.toBeUndefined();
+    const call = spy.mock.calls[0] as unknown as [string, { body: string }];
+    expect(call[0]).toContain('/sessions/ase_1/events');
+    expect(call[0]).toContain('/agents/');
+    expect(JSON.parse(call[1].body)).toEqual({ type: 'interrupt', stream_response: false });
+  });
+
+  it('treats a 400 as the turn having already finished', async () => {
+    stubFetch({ messages: ['Nothing to interrupt, session is not running'] }, { ok: false, status: 400 });
+    await expect(interruptTurn('ase_1')).resolves.toBeUndefined();
+  });
+
+  it('raises on any other failure', async () => {
+    stubFetch({}, { ok: false, status: 500 });
+    await expect(interruptTurn('ase_1')).rejects.toThrow(UpstreamError);
   });
 });
 
