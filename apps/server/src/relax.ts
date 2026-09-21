@@ -51,6 +51,19 @@ export function relaxations(filters: SearchFilters): Relaxation[] {
   if (filters.propertyType) {
     single.push({ label: 'with any property type', filters: without(filters, 'propertyType') });
   }
+  // minAreaSqft, maxBedrooms and minPrice are also hard clauses in
+  // buildMetadataFilter, and each can empty a search on its own — without a
+  // candidate for them, a search like "rent, at least 10,000 sq ft" finds
+  // nothing and has no probe to explain why.
+  if (filters.minAreaSqft) {
+    single.push({ label: 'without the minimum size', filters: without(filters, 'minAreaSqft') });
+  }
+  if (filters.maxBedrooms) {
+    single.push({ label: 'without the bedroom maximum', filters: without(filters, 'maxBedrooms') });
+  }
+  if (filters.minPrice) {
+    single.push({ label: 'without the minimum price', filters: without(filters, 'minPrice') });
+  }
 
   const hasArea = Boolean(filters.area) || Boolean(filters.areas?.length);
   if (!hasArea) return single.slice(0, MAX_PROBES);

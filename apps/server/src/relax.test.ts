@@ -32,6 +32,34 @@ describe('relaxations', () => {
     expect(relaxations({ purpose: 'rent', minBedrooms: 1 })).toEqual([]);
   });
 
+  it('offers the propertyType candidate with its exact label and filters', () => {
+    expect(relaxations({ purpose: 'rent', propertyType: 'Flats' })).toContainEqual({
+      label: 'with any property type',
+      filters: { purpose: 'rent' },
+    });
+  });
+
+  it('drops the minimum size when one was set', () => {
+    expect(relaxations({ purpose: 'rent', minAreaSqft: 1000 })).toContainEqual({
+      label: 'without the minimum size',
+      filters: { purpose: 'rent' },
+    });
+  });
+
+  it('drops the bedroom maximum when one was set', () => {
+    expect(relaxations({ purpose: 'rent', maxBedrooms: 2 })).toContainEqual({
+      label: 'without the bedroom maximum',
+      filters: { purpose: 'rent' },
+    });
+  });
+
+  it('drops the minimum price when one was set', () => {
+    expect(relaxations({ purpose: 'rent', minPrice: 500_000 })).toContainEqual({
+      label: 'without the minimum price',
+      filters: { purpose: 'rent' },
+    });
+  });
+
   it('drops the area last and always keeps that probe when an area was set', () => {
     const rs = relaxations({
       purpose: 'rent',
