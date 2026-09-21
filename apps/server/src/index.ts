@@ -10,10 +10,13 @@ import type { ClientEvent } from './sse.js';
 import { mountAuthRoutes } from './routes/auth.js';
 import { mountBookingRoutes } from './routes/booking.js';
 import { mountWebClient } from './static.js';
+import { MAX_MESSAGE_CHARS, MAX_TURNS_PER_SESSION, SessionGate } from './limits.js';
 
 const app = express();
 app.use(cors({ origin: config.corsOrigins }));
 app.use(express.json({ limit: '256kb' }));
+
+const gate = new SessionGate({ maxTurns: MAX_TURNS_PER_SESSION });
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, corpus: config.corpusKey, agent: config.agentKey });
@@ -64,6 +67,22 @@ app.post('/api/chat', async (req: Request, res: Response) => {
     res.status(400).json({ error: 'sessionKey and message are required' });
     return;
   }
+  if (message.length > MAX_MESSAGE_CHARS) {
+    res.status(413).json({ error: `Messages are limited to ${MAX_MESSAGE_CHARS} characters.` });
+    return;
+  }
+
+  // One turn at a time per session — two at once would interleave inside
+  // Vectara's session — and a ceiling on how many turns a session may take.
+  const admission = gate.admit(sessionKey);
+  if (admission === 'busy') {
+    res.status(409).json({ error: 'A reply is already in progress for this chat.' });
+    return;
+  }
+  if (admission === 'exhausted') {
+    res.status(429).json({ error: 'This chat has reached its limit. Start a new chat to continue.' });
+    return;
+  }
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -93,6 +112,7 @@ app.post('/api/chat', async (req: Request, res: Response) => {
   } catch (err) {
     send({ type: 'error', message: (err as Error).message });
   } finally {
+    gate.release(sessionKey);
     res.end();
   }
 });
