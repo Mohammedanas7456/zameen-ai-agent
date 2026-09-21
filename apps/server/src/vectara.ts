@@ -39,25 +39,50 @@ function retryDelay(attempt: number, res: Response | null): number {
   return retryPolicy.baseDelayMs * 2 ** attempt;
 }
 
+/** What a caller is willing to have repeated on its behalf. */
+export interface RetryOptions {
+  /** Statuses worth another attempt. Defaults to `RETRYABLE_STATUSES`. */
+  retryable?: ReadonlySet<number>;
+  /** Retry a request that never got an answer at all. Defaults to true. */
+  networkErrors?: boolean;
+}
+
 /**
  * `fetch` with a short retry on transient failures.
  *
  * A request that already timed out is never retried: the caller chose that
  * timeout as the most it was willing to wait, and three of them in a row is
  * not what it meant. Network errors and retryable statuses are.
+ *
+ * Callers must be idempotent under the statuses they retry — a request that
+ * changes state upstream has to narrow `options` to the failures that cannot
+ * have reached it. The `AbortSignal` in `init` is shared across attempts by
+ * design, so the caller's timeout is a total budget rather than a per-attempt
+ * one.
  */
-export async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+export async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  options: RetryOptions = {},
+): Promise<Response> {
+  const retryable = options.retryable ?? RETRYABLE_STATUSES;
+  const retryNetworkErrors = options.networkErrors ?? true;
   let lastResponse: Response | null = null;
 
   for (let attempt = 0; attempt < retryPolicy.attempts; attempt++) {
     const last = attempt === retryPolicy.attempts - 1;
     try {
       const res = await fetch(url, init);
-      if (res.ok || !RETRYABLE_STATUSES.has(res.status) || last) return res;
+      if (res.ok || !retryable.has(res.status) || last) return res;
+      // Nobody will read this one, and undici keeps the connection checked out
+      // until a body is consumed or cancelled — so release it before asking
+      // for another. Its headers survive cancellation, which is all
+      // `retryDelay` needs.
+      void res.body?.cancel().catch(() => {});
       lastResponse = res;
     } catch (err) {
       const name = (err as Error).name;
-      if (name === 'TimeoutError' || name === 'AbortError' || last) throw err;
+      if (name === 'TimeoutError' || name === 'AbortError' || last || !retryNetworkErrors) throw err;
       lastResponse = null;
     }
     await sleep(retryDelay(attempt, lastResponse));
@@ -164,6 +189,11 @@ export async function streamAgentTurn(
       // Agent turns can run several tool calls; allow generous headroom.
       signal: signal ? AbortSignal.any([AbortSignal.timeout(300_000), signal]) : AbortSignal.timeout(300_000),
     },
+    // A turn is not idempotent. A network error after the request was sent,
+    // or a 503/504 from a gateway whose upstream is still working, would
+    // append the user's message a second time and bill a turn nobody reads.
+    // A 429 is the one refusal that is certain never to have reached the agent.
+    { retryable: new Set([429]), networkErrors: false },
   );
 
   if (!res.ok || !res.body) {

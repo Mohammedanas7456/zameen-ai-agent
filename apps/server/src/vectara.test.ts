@@ -113,15 +113,23 @@ describe('interruptTurn', () => {
 });
 
 describe('fetchWithRetry', () => {
+  /** Each handed-out response's `body.cancel`, in order, so a test can assert
+   *  the ones that were set aside were drained rather than left open. */
+  let cancels: ReturnType<typeof vi.fn>[] = [];
+
   function sequence(responses: ({ status: number; headers?: Record<string, string> } | Error)[]) {
+    cancels = [];
     const spy = vi.fn(async () => {
       const next = responses.shift();
       if (next === undefined) throw new Error('no more responses');
       if (next instanceof Error) throw next;
+      const cancel = vi.fn(async () => {});
+      cancels.push(cancel);
       return {
         ok: next.status < 400,
         status: next.status,
         headers: new Headers(next.headers ?? {}),
+        body: { cancel },
         json: async () => ({}),
         text: async () => '',
       };
@@ -163,6 +171,29 @@ describe('fetchWithRetry', () => {
     timeout.name = 'TimeoutError';
     const spy = sequence([timeout, { status: 200 }]);
     await expect(fetchWithRetry('https://x/y', {})).rejects.toThrow(/timeout/);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('drains a response it sets aside so the connection is released', async () => {
+    const spy = sequence([{ status: 503 }, { status: 200 }]);
+    const res = await fetchWithRetry('https://x/y', {});
+    expect(res.status).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(2);
+    // The 503 nobody will read; the 200 is the caller's to consume.
+    expect(cancels[0]).toHaveBeenCalledTimes(1);
+    expect(cancels[1]).not.toHaveBeenCalled();
+  });
+
+  it('honours a caller that retries only some statuses', async () => {
+    const spy = sequence([{ status: 503 }, { status: 200 }]);
+    const res = await fetchWithRetry('https://x/y', {}, { retryable: new Set([429]) });
+    expect(res.status).toBe(503);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('honours a caller that opts out of retrying network errors', async () => {
+    const spy = sequence([new TypeError('fetch failed'), { status: 200 }]);
+    await expect(fetchWithRetry('https://x/y', {}, { networkErrors: false })).rejects.toThrow(TypeError);
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
@@ -210,16 +241,43 @@ describe('callers use the retrying fetch', () => {
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
-  it('streamAgentTurn retries the initial connection only', async () => {
-    const responses = [{ status: 503 }, { status: 200 }];
+  /** Turn responses carry a stream body, which is what streamAgentTurn returns. */
+  function turns(responses: ({ status: number } | Error)[]) {
     const spy = vi.fn(async () => {
       const next = responses.shift()!;
-      return { ok: next.status < 400, status: next.status, headers: new Headers(), body: new ReadableStream(), text: async () => '' };
+      if (next instanceof Error) throw next;
+      return {
+        ok: next.status < 400,
+        status: next.status,
+        headers: new Headers(),
+        body: new ReadableStream(),
+        text: async () => '',
+      };
     });
     vi.stubGlobal('fetch', spy);
+    return spy;
+  }
+
+  it('streamAgentTurn retries a rate limit on the initial connection', async () => {
+    const spy = turns([{ status: 429 }, { status: 200 }]);
     const res = await streamAgentTurn('ase_1', 'hi');
     expect(res.status).toBe(200);
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  // A turn is not idempotent: a second POST would append the user's message
+  // to the session again, so only a refusal that never reached the agent is
+  // worth repeating.
+  it('streamAgentTurn does not retry a 503', async () => {
+    const spy = turns([{ status: 503 }, { status: 200 }]);
+    await expect(streamAgentTurn('ase_1', 'hi')).rejects.toThrow(/HTTP 503/);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('streamAgentTurn does not retry a network error', async () => {
+    const spy = turns([new TypeError('fetch failed'), { status: 200 }]);
+    await expect(streamAgentTurn('ase_1', 'hi')).rejects.toThrow(TypeError);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 
   it('createSession asks for a seven-day idle expiry', async () => {
