@@ -92,9 +92,9 @@ See [DEPLOY.md](DEPLOY.md).
 Both search paths run through the same `buildMetadataFilter`, in TypeScript, so neither depends on the model getting filter syntax right:
 
 - **Sidebar** → `POST /api/search` builds the filter and queries the corpus directly. No LLM in the path.
-- **Chat** → the agent calls the `search_properties` tool with *structured arguments* (`purpose`, `area`, `min_bedrooms`, …). The server validates them, builds the same filter, runs the query, and hands the results back to the agent to describe.
+- **Chat** → the agent calls the `search_properties` tool with *structured arguments* (`purpose`, `area`, `min_bedrooms`, …) plus a free-text `query` carrying the user's own words ("sea facing", "furnished") for ranking. The server takes the lambda's *normalised* criteria — so a value the lambda dropped is never applied as a filter — builds the same filter, runs the query, and hands the results back to the agent to describe. One message may do this up to three times, so the agent can relax a filter after an empty result without asking. When nothing matches, the server also counts a few relaxations (a wider budget, one fewer bedroom, anywhere in Karachi) and gives the agent the counts, so its suggestion is measured rather than guessed.
 
-A chat search therefore runs as two agent turns with our own exact query in between. The agent never sees unfiltered data and only ever describes listings that genuinely matched.
+Each chat search therefore runs as two agent turns with our own exact query in between. The agent never sees unfiltered data and only ever describes listings that genuinely matched.
 
 ### Why not let the agent write the filter?
 
