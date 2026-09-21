@@ -6,8 +6,9 @@
  *   4. the agent, wired to that tool
  *
  * Safe to re-run: the corpus is reused if it exists, documents are replaced,
- * and the tool and agent are recreated (the agent is torn down first, since an
- * agent referencing a tool blocks that tool's deletion).
+ * the tool is replaced, and the agent is updated in place (detached from the
+ * old tool first, since an agent referencing a tool blocks its deletion) so
+ * its sessions survive.
  */
 import { config as loadEnv } from 'dotenv';
 import { readFile } from 'node:fs/promises';
@@ -131,29 +132,23 @@ interface ToolSummary {
   name?: string;
 }
 
-/**
- * Create (or replace) the agent's search tool.
- *
- * It is a lambda because a lambda's input schema is generated from its Python
- * signature and is therefore flat — which is the part a model can actually
- * fill. The built-in corpora_search tool takes a nested `search` object that
- * the model never emits, and whose `corpora` array can only be set through
- * `argument_override`, making a per-call metadata filter impossible.
- *
- * The lambda only validates criteria; the server performs the real search.
- */
-async function ensureSearchTool(client: VectaraClient): Promise<string> {
-  console.log(`\n[3/4] Tool "${SEARCH_TOOL_NAME}"`);
-  const code = await readFile(join(ROOT, 'vectara', 'search_properties.py'), 'utf8');
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  // Tools are immutable in the ways that matter here, so replace rather than
-  // patch. An agent still referencing the old tool blocks its deletion, which
-  // is why the agent is (re)created after this step.
-  //
-  // The listing must be paged through: the account has several hundred built-in
-  // tools, so a single page never reaches our own.
+/**
+ * Re-injected on every input — including the SEARCH RESULTS messages the
+ * server sends — so the rule survives long sessions where the system prompt
+ * has scrolled out of the model's effective attention.
+ */
+const RESULTS_REMINDER =
+  'Reminder: only describe listings that appear in a SEARCH RESULTS message. Never invent ' +
+  'a property, price, area or phone number. If nothing matched, say so and suggest one ' +
+  'relaxation rather than inventing a match.';
+
+/** Every tool with our name, paged through the full list: the account has
+ *  several hundred built-in tools, so a single page never reaches our own. */
+async function findSearchTools(client: VectaraClient): Promise<ToolSummary[]> {
   let pageKey: string | undefined;
-  let deleted = 0;
+  const found: ToolSummary[] = [];
   do {
     const query = new URLSearchParams({ limit: '100', ...(pageKey ? { page_key: pageKey } : {}) });
     const { data } = await client.request<{
@@ -162,48 +157,22 @@ async function ensureSearchTool(client: VectaraClient): Promise<string> {
     }>('GET', `/tools?${query}`);
 
     for (const tool of data.tools ?? []) {
-      if (tool.name === SEARCH_TOOL_NAME) {
-        await client.request('DELETE', `/tools/${tool.id}`, undefined, {
-          allowStatuses: [400, 404, 409],
-        });
-        deleted++;
-      }
+      if (tool.name === SEARCH_TOOL_NAME) found.push(tool);
     }
     pageKey = data.metadata?.page_key || undefined;
   } while (pageKey);
-
-  if (deleted > 0) console.log(`      removed ${deleted} previous version(s)`);
-
-  const created = await client.request<{ id?: string; function_definition?: { validation_status?: string } }>(
-    'POST',
-    '/tools',
-    {
-      type: 'lambda',
-      language: 'python',
-      name: SEARCH_TOOL_NAME,
-      title: 'Search Karachi Properties',
-      description:
-        'Search Karachi property listings by structured criteria (purpose, area, bedrooms, ' +
-        'price, property type, floor). Returns the normalised criteria; the matching listings ' +
-        'are delivered in the following message.',
-      code,
-    },
-  );
-
-  const id = created.data.id;
-  if (!id) throw new Error('Tool creation returned no id');
-  console.log(`      created ${id} (${created.data.function_definition?.validation_status ?? 'unknown'})`);
-  return id;
+  return found;
 }
 
-async function ensureAgent(
-  client: VectaraClient,
+/**
+ * The agent's full definition. With `searchToolId` null it is built without
+ * the search tool, which is how the tool is freed for replacement.
+ */
+async function agentConfig(
   listings: Listing[],
   facets: Facets,
-  searchToolId: string,
-): Promise<void> {
-  console.log(`\n[4/4] Agent "${AGENT_KEY}"`);
-
+  searchToolId: string | null,
+): Promise<Record<string, unknown>> {
   const template = await readFile(join(ROOT, 'vectara', 'agent-instructions.md'), 'utf8');
   const instructions = template
     .replace('{{TOTAL}}', String(listings.length))
@@ -212,7 +181,7 @@ async function ensureAgent(
     .replaceAll('{{CORPUS_KEY}}', CORPUS_KEY)
     .replace('{{AREAS}}', renderAreaList(facets));
 
-  const config = {
+  return {
     key: AGENT_KEY,
     name: 'Zameen Property Assistant',
     description: 'Conversational property search over Zameen.com Karachi listings.',
@@ -231,24 +200,109 @@ async function ensureAgent(
             template_type: 'text',
           },
         ],
+        reminders: [
+          {
+            type: 'templated',
+            template_type: 'text',
+            template: RESULTS_REMINDER,
+            hooks: ['input_message'],
+          },
+        ],
         output_parser: { type: 'default' },
       },
     },
-    tool_configurations: {
-      [SEARCH_TOOL_NAME]: {
-        type: 'lambda',
-        tool_id: searchToolId,
-      },
-    },
+    tool_configurations: searchToolId
+      ? { [SEARCH_TOOL_NAME]: { type: 'lambda', tool_id: searchToolId } }
+      : {},
   };
+}
 
+/**
+ * Create the agent, or replace it in place. PUT keeps the agent's sessions;
+ * the delete-and-recreate this used to do ended every live conversation on
+ * each prompt change. Returns true when the agent was newly created.
+ */
+async function putAgent(client: VectaraClient, config: Record<string, unknown>): Promise<boolean> {
   const created = await client.request('POST', '/agents', config, { allowStatuses: [409] });
-  if (created.status === 409) {
-    await client.request('PUT', `/agents/${AGENT_KEY}`, config);
-    console.log('      already existed — updated in place');
-  } else {
-    console.log('      created');
+  if (created.status !== 409) return true;
+  // PUT replaces; PATCH merges, which cannot remove a tool reference.
+  await client.request('PUT', `/agents/${AGENT_KEY}`, config);
+  return false;
+}
+
+/**
+ * Create (or replace) the agent's search tool.
+ *
+ * It is a lambda because a lambda's input schema is generated from its Python
+ * signature and is therefore flat — which is the part a model can actually
+ * fill. The built-in corpora_search tool takes a nested `search` object that
+ * the model never emits, and whose `corpora` array can only be set through
+ * `argument_override`, making a per-call metadata filter impossible.
+ *
+ * The lambda only validates criteria; the server performs the real search.
+ *
+ * Vectara refuses to delete a tool an agent references, so the agent is first
+ * replaced *without* the tool, and reattached in `ensureAgent`. Deletion is
+ * asynchronous, hence the wait before recreating under the same name.
+ */
+async function ensureSearchTool(client: VectaraClient, listings: Listing[], facets: Facets): Promise<string> {
+  console.log(`\n[3/4] Tool "${SEARCH_TOOL_NAME}"`);
+
+  const existing = await findSearchTools(client);
+  if (existing.length > 0) {
+    await putAgent(client, await agentConfig(listings, facets, null));
+    console.log('      detached from the agent');
+
+    for (const tool of existing) {
+      await client.request('DELETE', `/tools/${tool.id}`, undefined, { allowStatuses: [404] });
+    }
+
+    let remaining = existing.length;
+    for (let i = 0; i < 20 && remaining > 0; i++) {
+      await sleep(1500);
+      remaining = (await findSearchTools(client)).length;
+    }
+    if (remaining > 0) {
+      throw new Error(
+        `${remaining} old "${SEARCH_TOOL_NAME}" tool(s) could not be deleted — ` +
+          'another agent still references them.',
+      );
+    }
+    console.log(`      removed ${existing.length} previous version(s)`);
   }
+
+  const code = await readFile(join(ROOT, 'vectara', 'search_properties.py'), 'utf8');
+  const created = await client.request<{ id?: string; function_definition?: { validation_status?: string } }>(
+    'POST',
+    '/tools',
+    {
+      type: 'lambda',
+      language: 'python',
+      name: SEARCH_TOOL_NAME,
+      title: 'Search Karachi Properties',
+      description:
+        'Search Karachi property listings by structured criteria (purpose, area, bedrooms, ' +
+        'price, property type, floor) plus the user\'s own words for ranking. Returns the ' +
+        'normalised criteria; the matching listings are delivered in the following message.',
+      code,
+    },
+  );
+
+  const id = created.data.id;
+  if (!id) throw new Error('Tool creation returned no id');
+  console.log(`      created ${id} (${created.data.function_definition?.validation_status ?? 'unknown'})`);
+  return id;
+}
+
+async function ensureAgent(
+  client: VectaraClient,
+  listings: Listing[],
+  facets: Facets,
+  searchToolId: string,
+): Promise<void> {
+  console.log(`\n[4/4] Agent "${AGENT_KEY}"`);
+  const created = await putAgent(client, await agentConfig(listings, facets, searchToolId));
+  console.log(created ? '      created' : '      updated in place');
 }
 
 async function main() {
@@ -265,10 +319,7 @@ async function main() {
   if (!agentOnly) await ensureCorpus(client);
   if (skipIndex) console.log('\n[2/4] Indexing skipped (--skip-index)');
   else await indexListings(client, listings);
-  // The agent must be deleted before its tool can be replaced, then recreated
-  // pointing at the new tool id.
-  await client.request('DELETE', `/agents/${AGENT_KEY}`, undefined, { allowStatuses: [404] });
-  const searchToolId = await ensureSearchTool(client);
+  const searchToolId = await ensureSearchTool(client, listings, facets);
   await ensureAgent(client, listings, facets, searchToolId);
 
   console.log(`\nDone.\n  corpus: ${CORPUS_KEY}\n  agent:  ${AGENT_KEY}`);
