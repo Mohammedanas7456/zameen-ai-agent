@@ -1,7 +1,15 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { getListingById, searchListings } from './vectara.js';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { createSession, fetchWithRetry, getListingById, retryPolicy, searchListings, streamAgentTurn } from './vectara.js';
 
 afterEach(() => vi.unstubAllGlobals());
+
+const originalDelay = retryPolicy.baseDelayMs;
+beforeEach(() => {
+  retryPolicy.baseDelayMs = 0;
+});
+afterEach(() => {
+  retryPolicy.baseDelayMs = originalDelay;
+});
 
 function stubFetch(body: unknown, init: { ok?: boolean; status?: number } = {}) {
   const spy = vi.fn(async () => ({
@@ -80,5 +88,116 @@ describe('searchListings', () => {
     const body = JSON.parse(init?.body ?? '{}') as { query: string; search: Record<string, unknown> };
     expect(body.query).toBe('property in Karachi');
     expect(body.search).not.toHaveProperty('metadata_filter');
+  });
+});
+
+describe('fetchWithRetry', () => {
+  function sequence(responses: ({ status: number; headers?: Record<string, string> } | Error)[]) {
+    const spy = vi.fn(async () => {
+      const next = responses.shift();
+      if (next === undefined) throw new Error('no more responses');
+      if (next instanceof Error) throw next;
+      return {
+        ok: next.status < 400,
+        status: next.status,
+        headers: new Headers(next.headers ?? {}),
+        json: async () => ({}),
+        text: async () => '',
+      };
+    });
+    vi.stubGlobal('fetch', spy);
+    return spy;
+  }
+
+  it('retries a 503 and returns the eventual success', async () => {
+    const spy = sequence([{ status: 503 }, { status: 200 }]);
+    const res = await fetchWithRetry('https://x/y', {});
+    expect(res.status).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries 429, 502 and 504 but gives up after the configured attempts', async () => {
+    const spy = sequence([{ status: 429 }, { status: 502 }, { status: 504 }, { status: 200 }]);
+    const res = await fetchWithRetry('https://x/y', {});
+    expect(res.status).toBe(504);
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry a client error', async () => {
+    const spy = sequence([{ status: 400 }, { status: 200 }]);
+    const res = await fetchWithRetry('https://x/y', {});
+    expect(res.status).toBe(400);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a network error', async () => {
+    const spy = sequence([new TypeError('fetch failed'), { status: 200 }]);
+    const res = await fetchWithRetry('https://x/y', {});
+    expect(res.status).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry a timeout', async () => {
+    const timeout = new Error('The operation was aborted due to timeout');
+    timeout.name = 'TimeoutError';
+    const spy = sequence([timeout, { status: 200 }]);
+    await expect(fetchWithRetry('https://x/y', {})).rejects.toThrow(/timeout/);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits no longer than maxRetryAfterMs even if Retry-After asks for more', async () => {
+    const originalCap = retryPolicy.maxRetryAfterMs;
+    retryPolicy.maxRetryAfterMs = 50;
+    try {
+      const spy = sequence([{ status: 429, headers: { 'retry-after': '3600' } }, { status: 200 }]);
+      const started = Date.now();
+      const res = await fetchWithRetry('https://x/y', {});
+      expect(res.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(2);
+      // With baseDelayMs zeroed only the header could delay us, and it must
+      // be clamped to the cap rather than honoured.
+      const elapsed = Date.now() - started;
+      expect(elapsed).toBeGreaterThanOrEqual(40);
+      expect(elapsed).toBeLessThan(1000);
+    } finally {
+      retryPolicy.maxRetryAfterMs = originalCap;
+    }
+  });
+});
+
+describe('callers use the retrying fetch', () => {
+  it('searchListings survives one 503', async () => {
+    const responses: unknown[] = [{ status: 503 }, { status: 200, body: { search_results: [{ document_metadata: METADATA }] } }];
+    const spy = vi.fn(async () => {
+      const next = responses.shift() as { status: number; body?: unknown };
+      return { ok: next.status < 400, status: next.status, headers: new Headers(), json: async () => next.body, text: async () => JSON.stringify(next.body ?? {}) };
+    });
+    vi.stubGlobal('fetch', spy);
+    const listings = await searchListings({ purpose: 'rent' }, 'x');
+    expect(listings).toHaveLength(1);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('createSession survives one 502', async () => {
+    const responses = [{ status: 502, body: {} }, { status: 201, body: { key: 'ase_1' } }];
+    const spy = vi.fn(async () => {
+      const next = responses.shift()!;
+      return { ok: next.status < 400, status: next.status, headers: new Headers(), json: async () => next.body, text: async () => '' };
+    });
+    vi.stubGlobal('fetch', spy);
+    await expect(createSession('web')).resolves.toBe('ase_1');
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('streamAgentTurn retries the initial connection only', async () => {
+    const responses = [{ status: 503 }, { status: 200 }];
+    const spy = vi.fn(async () => {
+      const next = responses.shift()!;
+      return { ok: next.status < 400, status: next.status, headers: new Headers(), body: new ReadableStream(), text: async () => '' };
+    });
+    vi.stubGlobal('fetch', spy);
+    const res = await streamAgentTurn('ase_1', 'hi');
+    expect(res.status).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(2);
   });
 });

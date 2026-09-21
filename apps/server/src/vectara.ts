@@ -16,9 +16,60 @@ export class UpstreamError extends Error {
   }
 }
 
+/**
+ * Retry policy for Vectara calls. Exported as a mutable object so tests can
+ * zero the delay; production never changes it.
+ *
+ * 429 is a rate limit, 502/503/504 are Vectara's codes for an unreachable or
+ * timed-out model provider — all of them clear on their own within seconds.
+ * A 4xx other than 429 is our mistake and will not clear by retrying.
+ */
+export const retryPolicy = { attempts: 3, baseDelayMs: 500, maxRetryAfterMs: 5_000 };
+
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function retryDelay(attempt: number, res: Response | null): number {
+  const header = res?.headers.get('retry-after');
+  const seconds = header ? Number.parseFloat(header) : Number.NaN;
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, retryPolicy.maxRetryAfterMs);
+  }
+  return retryPolicy.baseDelayMs * 2 ** attempt;
+}
+
+/**
+ * `fetch` with a short retry on transient failures.
+ *
+ * A request that already timed out is never retried: the caller chose that
+ * timeout as the most it was willing to wait, and three of them in a row is
+ * not what it meant. Network errors and retryable statuses are.
+ */
+export async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+  let lastResponse: Response | null = null;
+
+  for (let attempt = 0; attempt < retryPolicy.attempts; attempt++) {
+    const last = attempt === retryPolicy.attempts - 1;
+    try {
+      const res = await fetch(url, init);
+      if (res.ok || !RETRYABLE_STATUSES.has(res.status) || last) return res;
+      lastResponse = res;
+    } catch (err) {
+      const name = (err as Error).name;
+      if (name === 'TimeoutError' || name === 'AbortError' || last) throw err;
+      lastResponse = null;
+    }
+    await sleep(retryDelay(attempt, lastResponse));
+  }
+
+  // Unreachable: the loop returns or throws on its last attempt.
+  throw new UpstreamError('Retry loop exited without a response', 502);
+}
+
 /** Create a conversation session. Sessions carry the multi-turn context. */
 export async function createSession(name: string): Promise<string> {
-  const res = await fetch(`${config.baseUrl}/agents/${config.agentKey}/sessions`, {
+  const res = await fetchWithRetry(`${config.baseUrl}/agents/${config.agentKey}/sessions`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ name, metadata: { app: 'zameen-ai-agent' } }),
@@ -54,7 +105,7 @@ export async function searchListings(
 ): Promise<Listing[]> {
   const metadataFilter = buildMetadataFilter(filters);
 
-  const res = await fetch(`${config.baseUrl}/corpora/${config.corpusKey}/query`, {
+  const res = await fetchWithRetry(`${config.baseUrl}/corpora/${config.corpusKey}/query`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -86,7 +137,7 @@ export async function searchListings(
  * SEARCH LIMIT message once a user message has used up its searches.
  */
 export async function streamAgentTurn(sessionKey: string, message: string): Promise<Response> {
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${config.baseUrl}/agents/${config.agentKey}/sessions/${sessionKey}/events`,
     {
       method: 'POST',
@@ -122,7 +173,7 @@ export async function getListingById(purpose: Purpose, externalId: string): Prom
   if (!SAFE_EXTERNAL_ID.test(externalId)) return null;
 
   const documentId = `${purpose}-${externalId}`;
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${config.baseUrl}/corpora/${config.corpusKey}/documents/${encodeURIComponent(documentId)}`,
     { headers, signal: AbortSignal.timeout(30_000) },
   );
