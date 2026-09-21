@@ -1,6 +1,13 @@
 import type { FloorBucket, Listing, SearchFilters } from '@zameen/shared';
 
-/** The flat arguments the agent passes to the `search_properties` lambda. */
+/**
+ * Shape shared by the model's raw tool arguments and the lambda's normalised
+ * `criteria` output — `criteriaToFilters` accepts either as a fallback for
+ * when the lambda itself failed. The two differ in a couple of ways: the
+ * lambda lowercases `property_type`, and returns `area` as a list once more
+ * than one area matched (the raw argument is always the one comma-separated
+ * string the model was told to send).
+ */
 export interface AgentCriteria {
   purpose?: unknown;
   area?: unknown;
@@ -16,6 +23,11 @@ export interface AgentCriteria {
 }
 
 const FLOORS: FloorBucket[] = ['ground', 'lower', 'upper', 'top', 'numbered'];
+
+/** Mirrors `TYPES` in vectara/search_properties.py. Checked case-insensitively
+ *  because this same allowlist also guards the raw-argument fallback, which
+ *  has not been through the lambda's lowercasing. */
+const PROPERTY_TYPES = ['houses', 'flats', 'upper portions', 'lower portions', 'penthouse'];
 
 /** The lambda receives ints but JSON round-trips them as floats (3 -> 3.0). */
 function positiveInt(value: unknown): number | undefined {
@@ -67,8 +79,12 @@ export function criteriaToFilters(criteria: AgentCriteria): SearchFilters {
   if (areas.length === 1) filters.area = areas[0];
   else if (areas.length > 1) filters.areas = areas;
 
+  // Kept in the casing the model (or lambda) sent, since buildMetadataFilter
+  // lowercases it anyway — only whether it's a real type is validated here.
   const propertyType = text(criteria.property_type);
-  if (propertyType) filters.propertyType = propertyType;
+  if (propertyType && PROPERTY_TYPES.includes(propertyType.toLowerCase())) {
+    filters.propertyType = propertyType;
+  }
 
   const minBedrooms = positiveInt(criteria.min_bedrooms);
   if (minBedrooms !== undefined) filters.minBedrooms = minBedrooms;

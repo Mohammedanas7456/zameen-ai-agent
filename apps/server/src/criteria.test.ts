@@ -52,6 +52,23 @@ describe('criteriaToFilters', () => {
     expect(criteriaToFilters({ purpose: 'rent', floor: 'basement' })).toEqual({ purpose: 'rent' });
   });
 
+  it('accepts a known property type in any casing', () => {
+    expect(criteriaToFilters({ purpose: 'rent', property_type: 'flats' })).toEqual({
+      purpose: 'rent',
+      propertyType: 'flats',
+    });
+    expect(criteriaToFilters({ purpose: 'rent', property_type: 'Upper Portions' })).toEqual({
+      purpose: 'rent',
+      propertyType: 'Upper Portions',
+    });
+  });
+
+  it('drops an unknown property type instead of passing it through as an exact filter', () => {
+    expect(criteriaToFilters({ purpose: 'rent', property_type: 'apartment' })).toEqual({
+      purpose: 'rent',
+    });
+  });
+
   it('drops a negative number instead of emitting it', () => {
     expect(criteriaToFilters({ purpose: 'rent', min_bedrooms: -3 })).toEqual({ purpose: 'rent' });
   });
