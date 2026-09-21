@@ -104,6 +104,13 @@ describe('handleUserMessage', () => {
     expect(start.filter).not.toContain('property_type');
     expect(h.events.some((e) => e.type === 'listings')).toBe(true);
 
+    // The activity chip is the only in-flight feedback for the whole search
+    // turn, so it must land before the results — not once the stream closes.
+    const startIndex = h.events.findIndex((e) => e.type === 'tool_start');
+    const listingsIndex = h.events.findIndex((e) => e.type === 'listings');
+    expect(startIndex).toBeGreaterThanOrEqual(0);
+    expect(startIndex).toBeLessThan(listingsIndex);
+
     // The throwaway acknowledgement is dropped; the narration is forwarded.
     expect(tokens(h.events)).toBe('One listing matched.');
 
@@ -121,6 +128,9 @@ describe('handleUserMessage', () => {
     ]);
     await h.run();
     expect(h.searchListings.mock.calls[0]?.[0]).toEqual({ purpose: 'rent', area: 'Clifton' });
+    // No usable tool_output ever arrived, so the chip comes from the
+    // end-of-turn fallback rather than the accepted branch.
+    expect(h.events.some((e) => e.type === 'tool_start')).toBe(true);
   });
 
   it('does not search when the lambda rejected the call, and lets the agent answer', async () => {
@@ -135,6 +145,37 @@ describe('handleUserMessage', () => {
     expect(h.searchListings).not.toHaveBeenCalled();
     expect(h.streamAgentTurn).toHaveBeenCalledTimes(1);
     expect(tokens(h.events)).toBe('Do you want to rent or buy?');
+  });
+
+  it('drops a rejected second call in the same turn instead of searching the first', async () => {
+    const h = harness([
+      [
+        toolInput({ purpose: 'rent', area: 'Clifton' }),
+        accepted({ purpose: 'rent', area: 'Clifton' }),
+        toolInput({ purpose: 'lease' }),
+        toolOutput({ status: 'error', error: "purpose must be either 'rent' or 'buy'", criteria: {} }),
+        prose('Do you want to rent or buy?'),
+      ],
+    ]);
+    await h.run();
+    expect(h.searchListings).not.toHaveBeenCalled();
+    expect(h.streamAgentTurn).toHaveBeenCalledTimes(1);
+    expect(tokens(h.events)).toBe('Do you want to rent or buy?');
+  });
+
+  it('searches on the second call\'s criteria when two calls land in the same turn', async () => {
+    const h = harness([
+      [
+        toolInput({ purpose: 'rent', area: 'Clifton' }),
+        accepted({ purpose: 'rent', area: 'Clifton' }),
+        toolInput({ purpose: 'rent', area: 'DHA Phase 6' }),
+        accepted({ purpose: 'rent', area: 'DHA Phase 6' }),
+      ],
+      [prose('done')],
+    ]);
+    await h.run();
+    expect(h.searchListings).toHaveBeenCalledTimes(1);
+    expect(h.searchListings.mock.calls[0]?.[0]).toEqual({ purpose: 'rent', area: 'DHA Phase 6' });
   });
 
   it("ranks by the user's own words when the agent passes a query", async () => {
@@ -218,6 +259,19 @@ describe('handleUserMessage', () => {
     expect(results).toContain('with the budget raised to PKR 125,000: 0 listings');
     expect(results).toContain('anywhere in Karachi: 2 listings');
     expect(results).toContain('suggest the most useful relaxation');
+  });
+
+  it('asks which constraint to relax when nothing matched and nothing can be relaxed', async () => {
+    const h = harness([
+      [toolInput({ purpose: 'rent' }), accepted({ purpose: 'rent' })],
+      [prose('Nothing matched.')],
+    ]);
+    h.searchListings.mockImplementation(async () => []);
+    await h.run();
+    const results = h.sent()[1]!;
+    expect(results).toContain('No listings matched those criteria.');
+    expect(results).toContain('ask which constraint they would like to relax');
+    expect(results).not.toContain('relaxation above');
   });
 
   it('stops doing work once the client has gone away', async () => {

@@ -95,6 +95,9 @@ async function runTurn(
   let ignoredSearch = false;
   let streamedProse = false;
   let forwardProse = true;
+  // Set once the activity chip has been sent, so a second search in the same
+  // turn (or the end-of-turn fallback) never announces the same call twice.
+  let started = false;
 
   while (!isAborted()) {
     const { done, value } = await reader.read();
@@ -135,7 +138,12 @@ async function runTurn(
             ignoredSearch = true;
             break;
           }
+          // A second search_properties call in the same turn is a normal way
+          // to relax a filter; whatever the first call left in normalised/
+          // warnings belongs to a request this one supersedes.
           requested = input as AgentCriteria;
+          normalised = null;
+          warnings = [];
           toolName = String(event['tool_configuration_name'] ?? toolName);
           break;
         }
@@ -157,6 +165,20 @@ async function runTurn(
           if (Array.isArray(out['warnings'])) {
             warnings = out['warnings'].filter((w): w is string => typeof w === 'string');
           }
+          // Announce the search as soon as its real criteria are known,
+          // rather than waiting for the rest of this turn's stream to close —
+          // that stream can carry a long "searching now" narration, during
+          // which the client would otherwise see nothing happen.
+          if (normalised && !started) {
+            started = true;
+            const filters = criteriaToFilters(normalised);
+            emit({
+              type: 'tool_start',
+              tool: toolName,
+              query: describeFilters(filters),
+              filter: buildMetadataFilter(filters),
+            });
+          }
           break;
         }
 
@@ -171,13 +193,18 @@ async function runTurn(
   const criteria = normalised ?? requested;
   if (!criteria) return { search: null, ignoredSearch };
 
-  const filters = criteriaToFilters(criteria);
-  emit({
-    type: 'tool_start',
-    tool: toolName,
-    query: describeFilters(filters),
-    filter: buildMetadataFilter(filters),
-  });
+  // Fallback for when no usable tool_output ever arrived (a lambda crash):
+  // the accepted branch above never ran, so this is the first chance to
+  // announce the search, built from the raw arguments instead.
+  if (!started) {
+    const filters = criteriaToFilters(criteria);
+    emit({
+      type: 'tool_start',
+      tool: toolName,
+      query: describeFilters(filters),
+      filter: buildMetadataFilter(filters),
+    });
+  }
   return { search: { criteria, warnings }, ignoredSearch };
 }
 
@@ -226,8 +253,15 @@ async function performSearch(
       filters,
       async (relaxed) => (await deps.searchListings(relaxed, query, SEARCH_LIMIT)).length,
     );
-    parts.push(describeProbes(probes, SEARCH_LIMIT));
-    parts.push('Tell the user nothing matched and suggest the most useful relaxation above.');
+    // With nothing to relax, describeProbes is stripped by the filter below,
+    // and pointing the model at "the relaxation above" would send it looking
+    // for a list that isn't in this message.
+    if (probes.length > 0) {
+      parts.push(describeProbes(probes, SEARCH_LIMIT));
+      parts.push('Tell the user nothing matched and suggest the most useful relaxation above.');
+    } else {
+      parts.push('Tell the user nothing matched and ask which constraint they would like to relax.');
+    }
   } else {
     parts.push('Describe these to the user now, following your presentation rules. Mention only the listings above.');
   }
