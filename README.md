@@ -118,12 +118,12 @@ A buyer can book a viewing on any listing, checked live against the estate agent
 
 ## Limits and recovery
 
-- **One turn at a time per chat.** A second message while a reply is streaming gets `409`; the UI never sends one, so this only matters to scripts.
-- **Messages are capped at 2,000 characters** (`413`) and **a chat at 60 turns** (`429`); after that, start a new chat. Both counters are per server instance — on Cloud Run that means per instance, so they bound one instance's exposure rather than a caller's global rate. The per-LLM `requests_per_second` ceiling in Vectara is the real backstop.
+- **One turn at a time per chat.** A second message while a reply is streaming gets `409`. The UI only sends one message at a time, but a reload during a reply re-adopts the same chat, so typing immediately after that can hit it.
+- **Messages are capped at 2,000 characters** (`413`) and **a chat at 60 turns** (`429`); after that, start a new chat. The turn cap is per chat session, and sessions are free to mint from `/api/session` — so it caps what one conversation can cost, not what one caller can. Per-IP limiting is the piece that would do that, and it isn't here. Both counters are per server instance too: on Cloud Run that means they bound a single instance's exposure rather than a caller's global rate. The per-LLM `requests_per_second` ceiling in Vectara is the real backstop.
 - **Sessions expire after 7 idle days.** The browser reopens its most recent chat on reload; a message to an expired session starts a new one automatically, with a note in the transcript that the assistant won't remember earlier turns.
-- **Transient Vectara failures are retried** (429, 502, 503, 504 and network errors; three attempts, half a second apart, honouring `Retry-After` up to 5 s). A request that timed out is not retried.
-- **Closing the tab mid-reply interrupts the turn on Vectara** rather than letting it run to completion unread.
-- **Upstream problems are reported, not swallowed.** A model error, a context-limit overflow or an interrupted session each arrive as an error line in the chat instead of an empty bubble. Each turn's token usage is logged as a JSON line (`turn_usage`).
+- **Transient Vectara failures are retried** (429, 502, 503, 504 and network errors): three attempts, with 0.5 s then 1 s between them; a `Retry-After` header in seconds is honoured up to 5 s (an HTTP-date value is ignored); a request that timed out is not retried; chat turns retry only on 429, because a turn is not idempotent — anything else risks appending the same message to the session twice.
+- **Closing the tab mid-reply interrupts the turn on Vectara** rather than letting it run to completion unread. The interrupt is awaited, so it completes before the request ends.
+- **Upstream problems are reported, not swallowed.** A model error, a context-limit overflow or an interrupted session each arrive as an error message under the chat instead of an empty bubble. Each turn's token usage is logged as a JSON line (`turn_usage`).
 
 ## Data notes
 
