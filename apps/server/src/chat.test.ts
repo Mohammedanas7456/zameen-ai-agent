@@ -61,12 +61,21 @@ function harness(turns: object[][], results: Listing[] | Error = [LISTING]) {
     if (results instanceof Error) throw results;
     return results;
   });
+  const interruptTurn = vi.fn<(sessionKey: string) => Promise<void>>(async () => {});
+  const log = vi.fn<(entry: Record<string, unknown>) => void>();
   return {
     events,
     streamAgentTurn,
     searchListings,
+    interruptTurn,
+    log,
     run: (message = 'hello', isAborted: () => boolean = () => false) =>
-      handleUserMessage('sess', message, (e) => events.push(e), isAborted, { streamAgentTurn, searchListings }),
+      handleUserMessage('sess', message, (e) => events.push(e), isAborted, {
+        streamAgentTurn,
+        searchListings,
+        interruptTurn,
+        log,
+      }),
     /** Every message sent to the agent, in order. Index 0 is the user's. */
     sent: () => streamAgentTurn.mock.calls.map((c) => c[1]),
   };
@@ -439,5 +448,89 @@ describe('handleUserMessage', () => {
     await h.run('hello', () => aborted);
     expect(h.streamAgentTurn).toHaveBeenCalledTimes(1);
     expect(h.events.some((e) => e.type === 'listings')).toBe(false);
+  });
+
+  it('reports an upstream error event and stops the message', async () => {
+    const h = harness([
+      [prose('Let me '), { type: 'error', messages: ['LLM provider returned 503'] }],
+      [prose('never sent')],
+    ]);
+    await h.run();
+    expect(h.events).toContainEqual({
+      type: 'error',
+      code: 'upstream',
+      message: 'The assistant hit a problem: LLM provider returned 503.',
+    });
+    expect(h.streamAgentTurn).toHaveBeenCalledTimes(1);
+    expect(h.searchListings).not.toHaveBeenCalled();
+  });
+
+  it('does not search after an error, even if the tool was called first', async () => {
+    const h = harness([
+      [toolInput({ purpose: 'rent' }), accepted({ purpose: 'rent' }), { type: 'error', messages: ['boom'] }],
+      [prose('never sent')],
+    ]);
+    await h.run();
+    expect(h.searchListings).not.toHaveBeenCalled();
+    expect(h.events.filter((e) => e.type === 'error')).toHaveLength(1);
+  });
+
+  it('tells the user when the conversation has outgrown the model', async () => {
+    const h = harness([[{ type: 'context_limit_exceeded', message: 'too long', context_limit: 1000, actual_tokens: 1200 }]]);
+    await h.run();
+    const err = h.events.find((e) => e.type === 'error') as { code?: string; message: string };
+    expect(err.code).toBe('context_limit');
+    expect(err.message).toMatch(/new chat/i);
+  });
+
+  it('reports an interrupted session', async () => {
+    const h = harness([[{ type: 'session_interrupted' }]]);
+    await h.run();
+    expect(h.events.find((e) => e.type === 'error')).toMatchObject({ code: 'interrupted' });
+  });
+
+  it('logs the token usage Vectara reports for the turn', async () => {
+    const usage = { input_tokens: 1200, output_tokens: 80, total_tokens: 1280, model_context_window: 400_000 };
+    const h = harness([[prose('hi'), { type: 'context_consumed', session_context_usage: usage }]]);
+    await h.run();
+    expect(h.log).toHaveBeenCalledWith({ event: 'turn_usage', sessionKey: 'sess', usage });
+    expect(h.events.some((e) => e.type === 'error')).toBe(false);
+  });
+
+  it('asks Vectara to interrupt a turn the client abandoned mid-stream', async () => {
+    const encoder = new TextEncoder();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let aborted = false;
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(prose('Thinking'))}\n\n`));
+        await gate;
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(prose(' more'))}\n\n`));
+        controller.close();
+      },
+    });
+    const streamAgentTurn = vi.fn(async () => new Response(body));
+    const interruptTurn = vi.fn(async () => {});
+    const events: ClientEvent[] = [];
+    const run = handleUserMessage('sess', 'hi', (e) => events.push(e), () => aborted, {
+      streamAgentTurn,
+      searchListings: async () => [],
+      interruptTurn,
+      log: () => {},
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    aborted = true;
+    release();
+    await run;
+    expect(interruptTurn).toHaveBeenCalledWith('sess');
+  });
+
+  it('does not interrupt a turn that finished on its own', async () => {
+    const h = harness([[prose('done')]]);
+    await h.run();
+    expect(h.interruptTurn).not.toHaveBeenCalled();
   });
 });

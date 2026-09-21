@@ -158,6 +158,23 @@ export async function streamAgentTurn(sessionKey: string, message: string): Prom
   return res;
 }
 
+/**
+ * Ask Vectara to stop the turn in flight for a session.
+ *
+ * Called when the browser has gone away mid-turn. Nobody will read the reply,
+ * so the only thing finishing it would do is bill for it. One attempt, no
+ * retry: if this fails the turn just runs to completion as it did before.
+ */
+export async function interruptTurn(sessionKey: string): Promise<void> {
+  const res = await fetch(`${config.baseUrl}/agents/${config.agentKey}/sessions/${sessionKey}/events`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ type: 'interrupt', stream_response: false }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new UpstreamError(`Interrupt failed (HTTP ${res.status})`, res.status);
+}
+
 /** Vectara document ids are `${purpose}-${externalId}`; anything outside this
  *  alphabet cannot be one, and would otherwise be interpolated into a URL path. */
 const SAFE_EXTERNAL_ID = /^[A-Za-z0-9_-]{1,64}$/;

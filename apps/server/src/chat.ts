@@ -1,6 +1,6 @@
 import type { Listing, SearchFilters } from '@zameen/shared';
 import { buildMetadataFilter } from '@zameen/shared';
-import { searchListings, streamAgentTurn } from './vectara.js';
+import { interruptTurn, searchListings, streamAgentTurn } from './vectara.js';
 import {
   criteriaToFilters,
   describeFilters,
@@ -20,9 +20,18 @@ export type Emit = (event: ClientEvent) => void;
 export interface ChatDeps {
   streamAgentTurn: (sessionKey: string, message: string) => Promise<Response>;
   searchListings: (filters: SearchFilters, query: string, limit?: number) => Promise<Listing[]>;
+  /** Stop a turn the client abandoned. Failures are logged, never surfaced. */
+  interruptTurn: (sessionKey: string) => Promise<void>;
+  /** Structured log line. Console in production; a spy in tests. */
+  log: (entry: Record<string, unknown>) => void;
 }
 
-const defaultDeps: ChatDeps = { streamAgentTurn, searchListings };
+const defaultDeps: ChatDeps = {
+  streamAgentTurn,
+  searchListings,
+  interruptTurn,
+  log: (entry) => console.log(JSON.stringify(entry)),
+};
 
 /**
  * Searches one user message may trigger. Enough for the agent to relax a
@@ -69,6 +78,8 @@ interface TurnResult {
   searches: SearchRequest[];
   /** The agent called the tool in a turn that was not allowed to search. */
   ignoredSearch: boolean;
+  /** Vectara reported the turn could not complete; nothing further should be sent. */
+  failed: boolean;
 }
 
 /** One `search_properties` call's state while its turn's stream is still open. */
@@ -113,10 +124,15 @@ async function runTurn(
   let ignoredSearch = false;
   let streamedProse = false;
   let forwardProse = true;
+  let failed = false;
+  let streamEnded = false;
 
   while (!isAborted()) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) {
+      streamEnded = true;
+      break;
+    }
 
     for (const frame of parser.push(decoder.decode(value, { stream: true }))) {
       let event: Record<string, unknown>;
@@ -209,6 +225,40 @@ async function runTurn(
           break;
         }
 
+        case 'error': {
+          const messages = Array.isArray(event['messages'])
+            ? event['messages'].filter((m): m is string => typeof m === 'string')
+            : [];
+          emit({
+            type: 'error',
+            code: 'upstream',
+            message: `The assistant hit a problem${messages.length > 0 ? `: ${messages.join('; ')}` : ''}.`,
+          });
+          failed = true;
+          break;
+        }
+
+        case 'context_limit_exceeded':
+          emit({
+            type: 'error',
+            code: 'context_limit',
+            message: 'This conversation has grown too long for the assistant to follow. Start a new chat to continue.',
+          });
+          failed = true;
+          break;
+
+        case 'session_interrupted':
+          emit({ type: 'error', code: 'interrupted', message: 'The reply was interrupted before it finished.' });
+          failed = true;
+          break;
+
+        case 'context_consumed': {
+          // The only per-turn token count Vectara gives us; the bill lives here.
+          const usage = event['session_context_usage'];
+          if (usage && typeof usage === 'object') deps.log({ event: 'turn_usage', sessionKey, usage });
+          break;
+        }
+
         default:
           break;
       }
@@ -216,6 +266,17 @@ async function runTurn(
   }
 
   await reader.cancel().catch(() => {});
+
+  // The client left while Vectara was still generating. Finishing the turn
+  // would only bill for a reply nobody reads.
+  if (isAborted() && !streamEnded) {
+    deps.interruptTurn(sessionKey).catch((err: unknown) => {
+      deps.log({ event: 'interrupt_failed', sessionKey, error: (err as Error).message });
+    });
+  }
+
+  // Vectara said the turn could not complete; whatever calls it made are moot.
+  if (failed) return { searches: [], ignoredSearch: false, failed };
 
   const searches: SearchRequest[] = [];
   for (const call of calls.values()) {
@@ -234,7 +295,7 @@ async function runTurn(
     }
     searches.push({ criteria, warnings: call.warnings });
   }
-  return { searches, ignoredSearch };
+  return { searches, ignoredSearch, failed: false };
 }
 
 /**
@@ -318,11 +379,12 @@ export async function handleUserMessage(
   message: string,
   emit: Emit,
   isAborted: () => boolean,
-  deps: ChatDeps = defaultDeps,
+  deps: Partial<ChatDeps> = {},
 ): Promise<void> {
-  let turn = await runTurn(sessionKey, message, emit, isAborted, deps, SEARCH_TURN);
+  const d: ChatDeps = { ...defaultDeps, ...deps };
+  let turn = await runTurn(sessionKey, message, emit, isAborted, d, SEARCH_TURN);
 
-  for (let used = 0; turn.searches.length > 0 && !isAborted(); ) {
+  for (let used = 0; turn.searches.length > 0 && !turn.failed && !isAborted(); ) {
     // A turn can ask for more than the message has left; run what the budget
     // allows, in call order, and tell the model about the rest so it does not
     // read their absence as the searches simply never having happened.
@@ -334,7 +396,7 @@ export async function handleUserMessage(
     for (const [i, search] of toRun.entries()) {
       used += 1;
       const label = toRun.length > 1 ? `${i + 1} of ${toRun.length}` : undefined;
-      blocks.push(await performSearch(search, emit, isAborted, deps, label));
+      blocks.push(await performSearch(search, emit, isAborted, d, label));
       if (isAborted()) return;
     }
 
@@ -353,14 +415,14 @@ export async function handleUserMessage(
       [blocks.join('\n\n---\n\n'), skippedNote, budget].filter(Boolean).join('\n\n'),
       emit,
       isAborted,
-      deps,
+      d,
       remaining > 0 ? SEARCH_TURN : LAST_RESULTS_TURN,
     );
   }
 
   // The model asked for a search it was told it could not have. Its
   // acknowledgement was dropped, so give it one text-only turn to answer.
-  if (turn.ignoredSearch && !isAborted()) {
-    await runTurn(sessionKey, SEARCH_LIMIT_MESSAGE, emit, isAborted, deps, FINAL_TURN);
+  if (turn.ignoredSearch && !turn.failed && !isAborted()) {
+    await runTurn(sessionKey, SEARCH_LIMIT_MESSAGE, emit, isAborted, d, FINAL_TURN);
   }
 }

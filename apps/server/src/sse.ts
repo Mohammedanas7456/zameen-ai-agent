@@ -54,4 +54,10 @@ export type ClientEvent =
   | { type: 'tool_start'; tool: string; query: string; filter: string }
   | { type: 'listings'; listings: unknown[]; filter: string }
   | { type: 'done' }
-  | { type: 'error'; message: string };
+  | {
+      type: 'error';
+      message: string;
+      /** Set for failures the client can act on: a new chat fixes
+       *  `context_limit` and `session_expired`; the others are informational. */
+      code?: 'upstream' | 'context_limit' | 'interrupted' | 'session_expired';
+    };
