@@ -563,6 +563,48 @@ describe('handleUserMessage', () => {
     expect(interruptTurn).toHaveBeenCalledWith('sess');
   });
 
+  it('interrupts a turn abandoned while the POST to open it was still in flight', async () => {
+    // The abort lands before Vectara's response headers ever arrive, so
+    // streamAgentTurn's promise never resolves — it only rejects, the way
+    // undici rejects a fetch whose signal fires while the request is still
+    // being sent.
+    const controller = new AbortController();
+    const streamAgentTurn = vi.fn(
+      (_sessionKey: string, _message: string, signal?: AbortSignal) =>
+        new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            const err = new Error('This operation was aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        }),
+    );
+    const interruptTurn = vi.fn(async () => {});
+    const searchListings = vi.fn<Search>(async () => [LISTING]);
+    const events: ClientEvent[] = [];
+    const run = handleUserMessage(
+      'sess',
+      'hi',
+      (e) => events.push(e),
+      () => controller.signal.aborted,
+      { streamAgentTurn, searchListings, interruptTurn, log: () => {} },
+      controller.signal,
+    );
+
+    await new Promise((r) => setTimeout(r, 0));
+    controller.abort();
+
+    const timer = new Promise((_resolve, reject) => {
+      setTimeout(() => reject(new Error('handleUserMessage did not return after the client left')), 500);
+    });
+    await Promise.race([run, timer]);
+
+    expect(interruptTurn).toHaveBeenCalledTimes(1);
+    expect(interruptTurn).toHaveBeenCalledWith('sess');
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+    expect(searchListings).not.toHaveBeenCalled();
+  });
+
   it('does not interrupt a turn that finished on its own', async () => {
     const h = harness([[prose('done')]]);
     await h.run();

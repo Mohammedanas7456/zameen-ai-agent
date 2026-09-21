@@ -217,6 +217,10 @@ export async function interruptTurn(sessionKey: string): Promise<void> {
     body: JSON.stringify({ type: 'interrupt', stream_response: false }),
     signal: AbortSignal.timeout(10_000),
   });
+  // Nobody reads this response's body on any path below — drain it now, the
+  // same idiom fetchWithRetry uses, so undici releases the connection rather
+  // than holding it open for a reply this call has no use for.
+  void res.body?.cancel().catch(() => {});
   // Vectara answers 400 with "Nothing to interrupt, session is not running":
   // the turn finished between the client leaving and this call. That is the
   // outcome we wanted, not a failure worth logging.

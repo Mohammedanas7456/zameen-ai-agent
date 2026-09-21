@@ -206,7 +206,12 @@ describe('POST /api/chat', () => {
     await withServer(async (base, port) => {
       const gate = deferred();
       const entered = deferred();
-      handleUserMessage.mockImplementationOnce(async () => {
+      // Captured from the call itself, not asserted against a fresh
+      // AbortController: what matters is that the route hands the socket's
+      // own signal through, and that that signal is the one that fires.
+      let capturedSignal: AbortSignal | undefined;
+      handleUserMessage.mockImplementationOnce(async (...args: unknown[]) => {
+        capturedSignal = args[5] as AbortSignal;
         entered.resolve();
         await gate.promise;
       });
@@ -228,6 +233,18 @@ describe('POST /api/chat', () => {
       // The turn ends once Vectara's stream does, however the socket went.
       gate.resolve();
       await new Promise((r) => setTimeout(r, 10));
+
+      expect(handleUserMessage).toHaveBeenCalledWith(
+        'sess',
+        'hi',
+        expect.any(Function),
+        expect.any(Function),
+        undefined,
+        expect.any(AbortSignal),
+      );
+      // The route's whole point is to hand upstream calls a signal that
+      // actually fires when the socket does — not just any AbortSignal.
+      expect(capturedSignal?.aborted).toBe(true);
 
       handleUserMessage.mockResolvedValueOnce(undefined);
       const second = await chat(base, { sessionKey: 'sess', message: 'again' });

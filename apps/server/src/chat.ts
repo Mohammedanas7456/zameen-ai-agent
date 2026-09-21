@@ -97,6 +97,23 @@ interface CallState {
   toolName: string;
 }
 
+/**
+ * Ask Vectara to stop a turn the client left mid-flight. Shared by both
+ * places `runTurn` can discover the client is gone: mid-stream, and while
+ * the opening POST was still in flight.
+ *
+ * Awaited, not fired and forgotten: Cloud Run throttles an instance's CPU
+ * once no request is in flight, so a pending fetch left behind by a handler
+ * that has already returned may never complete. The call carries its own
+ * 10 s timeout, so this cannot hold the request open for long. Failures are
+ * logged, never surfaced — nobody is left to read them.
+ */
+async function interruptAbandonedTurn(sessionKey: string, deps: ChatDeps): Promise<void> {
+  await deps.interruptTurn(sessionKey).catch((err: unknown) => {
+    deps.log({ event: 'interrupt_failed', sessionKey, error: (err as Error).message });
+  });
+}
+
 /** Stream one agent turn, forwarding its prose to the client. */
 async function runTurn(
   sessionKey: string,
@@ -107,7 +124,18 @@ async function runTurn(
   mode: TurnMode,
   signal?: AbortSignal,
 ): Promise<TurnResult> {
-  const response = await deps.streamAgentTurn(sessionKey, message, signal);
+  let response: Response;
+  try {
+    response = await deps.streamAgentTurn(sessionKey, message, signal);
+  } catch (err) {
+    // The client left while the turn was still being opened — before
+    // Vectara's response headers ever arrived. Vectara may already have the
+    // message and be generating a reply, so interrupt on the way out just as
+    // we would for an abort discovered mid-stream.
+    if ((err as Error).name !== 'AbortError') throw err;
+    await interruptAbandonedTurn(sessionKey, deps);
+    return { searches: [], ignoredSearch: false, failed: false };
+  }
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   const parser = new SseParser();
@@ -278,15 +306,8 @@ async function runTurn(
 
   // The client left while Vectara was still generating. Finishing the turn
   // would only bill for a reply nobody reads.
-  //
-  // Awaited, not fired and forgotten: Cloud Run throttles an instance's CPU
-  // once no request is in flight, so a pending fetch left behind by a handler
-  // that has already returned may never complete. The call carries its own
-  // 10 s timeout, so this cannot hold the request open for long.
   if (isAborted() && !streamEnded) {
-    await deps.interruptTurn(sessionKey).catch((err: unknown) => {
-      deps.log({ event: 'interrupt_failed', sessionKey, error: (err as Error).message });
-    });
+    await interruptAbandonedTurn(sessionKey, deps);
   }
 
   // Vectara said the turn could not complete; whatever calls it made are moot.
