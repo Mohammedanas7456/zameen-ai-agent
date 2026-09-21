@@ -67,12 +67,19 @@ export async function fetchWithRetry(url: string, init: RequestInit): Promise<Re
   throw new UpstreamError('Retry loop exited without a response', 502);
 }
 
+/**
+ * How long a session survives without a message. A week covers the browser's
+ * chat history for any realistic gap; after that the next message gets a 404,
+ * which the route reports as `session_expired` so the client can start over.
+ */
+const SESSION_TTI_MINUTES = 7 * 24 * 60;
+
 /** Create a conversation session. Sessions carry the multi-turn context. */
 export async function createSession(name: string): Promise<string> {
   const res = await fetchWithRetry(`${config.baseUrl}/agents/${config.agentKey}/sessions`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ name, metadata: { app: 'zameen-ai-agent' } }),
+    body: JSON.stringify({ name, metadata: { app: 'zameen-ai-agent' }, tti_minutes: SESSION_TTI_MINUTES }),
     signal: AbortSignal.timeout(30_000),
   });
 

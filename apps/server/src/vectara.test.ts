@@ -200,4 +200,11 @@ describe('callers use the retrying fetch', () => {
     expect(res.status).toBe(200);
     expect(spy).toHaveBeenCalledTimes(2);
   });
+
+  it('createSession asks for a seven-day idle expiry', async () => {
+    const spy = stubFetch({ key: 'ase_1' }, { status: 201 });
+    await expect(createSession('web')).resolves.toBe('ase_1');
+    const init = (spy.mock.calls[0] as unknown[])[1] as { body: string };
+    expect(JSON.parse(init.body)).toMatchObject({ name: 'web', tti_minutes: 10_080 });
+  });
 });

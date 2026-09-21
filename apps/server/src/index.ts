@@ -110,7 +110,13 @@ app.post('/api/chat', async (req: Request, res: Response) => {
     await handleUserMessage(sessionKey, message, send, () => aborted);
     send({ type: 'done' });
   } catch (err) {
-    send({ type: 'error', message: (err as Error).message });
+    // A session Vectara no longer has (expired, or the agent was recreated)
+    // is the one failure the browser can fix by itself — by starting over.
+    if (err instanceof UpstreamError && err.status === 404) {
+      send({ type: 'error', code: 'session_expired', message: 'This chat has expired. Starting a new one.' });
+    } else {
+      send({ type: 'error', message: (err as Error).message });
+    }
   } finally {
     gate.release(sessionKey);
     res.end();
