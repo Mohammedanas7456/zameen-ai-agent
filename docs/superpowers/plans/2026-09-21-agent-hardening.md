@@ -791,9 +791,9 @@ const defaultDeps: ChatDeps = {
 };
 ```
 
-Add `failed: boolean` to `TurnResult` with the comment `/** Vectara reported the turn could not complete; nothing further should be sent. */`.
+Add `failed: boolean` to `TurnResult` (which already has `searches: SearchRequest[]` and `ignoredSearch: boolean`) with the comment `/** Vectara reported the turn could not complete; nothing further should be sent. */`.
 
-In `runTurn`, add the locals `let failed = false;` and `let streamEnded = false;` beside `started`. Change the read loop's `if (done) break;` to:
+In `runTurn`, add the locals `let failed = false;` and `let streamEnded = false;` beside `lastCallId`. Change the read loop's `if (done) break;` to:
 
 ```ts
     if (done) {
@@ -851,10 +851,11 @@ After `await reader.cancel().catch(() => {});` add:
     });
   }
 
-  if (failed) return { search: null, ignoredSearch: false, failed };
+  // Vectara said the turn could not complete; whatever calls it made are moot.
+  if (failed) return { searches: [], ignoredSearch: false, failed };
 ```
 
-and add `failed: false` to both remaining `return` objects in `runTurn`.
+and change the function's final `return { searches, ignoredSearch };` to `return { searches, ignoredSearch, failed: false };`. (`runTurn` now tracks one `CallState` per `tool_call_id` and returns `searches: SearchRequest[]`; this task does not change that — it only adds `failed`.)
 
 In `handleUserMessage`, change the signature's last parameter to `deps: Partial<ChatDeps> = {}` and start the body with:
 
@@ -862,7 +863,7 @@ In `handleUserMessage`, change the signature's last parameter to `deps: Partial<
   const d: ChatDeps = { ...defaultDeps, ...deps };
 ```
 
-then use `d` everywhere the function previously used `deps` (three `runTurn` calls and one `performSearch` call). Change the loop condition to `for (let used = 0; turn.search && !turn.failed && !isAborted(); )` and the final block's condition to `if (turn.ignoredSearch && !turn.failed && !isAborted())`.
+then use `d` everywhere the function previously used `deps` (the initial `runTurn`, the `performSearch` call inside the `for…of toRun` loop, the results-turn `runTurn`, and the final `SEARCH_LIMIT_MESSAGE` `runTurn`). Change the outer loop condition to `for (let used = 0; turn.searches.length > 0 && !turn.failed && !isAborted(); )` and the final block's condition to `if (turn.ignoredSearch && !turn.failed && !isAborted())`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
