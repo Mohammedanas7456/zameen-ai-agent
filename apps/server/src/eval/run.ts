@@ -13,15 +13,20 @@
 import { writeFile } from 'node:fs/promises';
 import type { Listing, SearchFilters } from '@zameen/shared';
 import { handleUserMessage } from '../chat.js';
+import { LISTINGS_SHOWN_TO_AGENT } from '../criteria.js';
 import { getFacets } from '../facets.js';
 import { createSession, searchListings } from '../vectara.js';
 import { CASES, type EvalCase } from './cases.js';
 import { evaluateTurn, type Observed } from './check.js';
 import { formatReport, parseArgs, resolveOutputPath, type CaseReport, type TurnReport } from './report.js';
 
-async function runCase(c: EvalCase, knownAreas: readonly string[]): Promise<CaseReport> {
+/**
+ * `turns` is filled in as the case runs rather than returned at the end, so a
+ * case that throws half way through still leaves the turns it did grade where
+ * `main` can put them in the report.
+ */
+async function runCase(c: EvalCase, knownAreas: readonly string[], turns: TurnReport[]): Promise<CaseReport> {
   const sessionKey = await createSession(`eval-${c.name}-${Date.now()}`);
-  const turns: TurnReport[] = [];
   // What the user has said so far in this case. The agent may repeat a budget
   // or an area from turn one in its reply to turn three, and that is the
   // user's own word, not an invention — grounding is allowed all of it.
@@ -51,7 +56,10 @@ async function runCase(c: EvalCase, knownAreas: readonly string[]): Promise<Case
       (event) => {
         if (event.type === 'token') observed.narration += event.text;
         else if (event.type === 'listings') {
-          observed.listings.push(...(event.listings as Listing[]));
+          // The user's grid gets every match; the agent's prompt gets the
+          // first eight. Grading the reply against the rest would fail it for
+          // a listing it was never shown.
+          observed.listings.push(...(event.listings as Listing[]).slice(0, LISTINGS_SHOWN_TO_AGENT));
           if (pending) observed.searches.push(pending);
         } else if (event.type === 'error') observed.errors.push(event.message);
       },
@@ -82,19 +90,30 @@ async function main(): Promise<void> {
   const knownAreas = (await getFacets()).areas.map((a) => a.name);
 
   const reports: CaseReport[] = [];
-  for (const c of selected) {
-    process.stdout.write(`running ${c.name}…\n`);
-    reports.push(await runCase(c, knownAreas));
-  }
+  try {
+    for (const c of selected) {
+      process.stdout.write(`running ${c.name}…\n`);
+      const turns: TurnReport[] = [];
+      try {
+        reports.push(await runCase(c, knownAreas, turns));
+      } catch (err) {
+        // A run costs ten sessions and several minutes of model time. One
+        // case dying — an expired session, an upstream 500 — must not throw
+        // away the nine that would have told us something.
+        reports.push({ name: c.name, why: c.why, passed: false, errored: (err as Error).message, turns });
+      }
+    }
 
-  console.log(`\n${formatReport(reports)}`);
-  if (options.json) {
-    // `npm run eval` runs with cwd in apps/server; INIT_CWD is where the
-    // person actually typed the command, which is what a relative path here
-    // should be read against.
-    const jsonPath = resolveOutputPath(options.json, process.env['INIT_CWD'], process.cwd());
-    await writeFile(jsonPath, `${JSON.stringify(reports, null, 2)}\n`);
-    console.log(`full report written to ${jsonPath}`);
+    console.log(`\n${formatReport(reports)}`);
+  } finally {
+    if (options.json) {
+      // `npm run eval` runs with cwd in apps/server; INIT_CWD is where the
+      // person actually typed the command, which is what a relative path here
+      // should be read against.
+      const jsonPath = resolveOutputPath(options.json, process.env['INIT_CWD'], process.cwd());
+      await writeFile(jsonPath, `${JSON.stringify(reports, null, 2)}\n`);
+      console.log(`full report written to ${jsonPath}`);
+    }
   }
   process.exitCode = reports.every((r) => r.passed) ? 0 : 1;
 }

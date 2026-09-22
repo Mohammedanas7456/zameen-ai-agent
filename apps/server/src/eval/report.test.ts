@@ -87,4 +87,36 @@ describe('formatReport', () => {
     expect(text).toContain('  warn search 1: extra floor: ground');
     expect(text).toContain('0/1 cases passed');
   });
+
+  it('marks a case that threw, and says what it threw', () => {
+    const text = formatReport([report({ passed: false, errored: 'Vectara session expired', turns: [] })]);
+    expect(text).toContain('! all-in-one');
+    expect(text).toContain('ERROR Vectara session expired');
+    expect(text).toContain('0/1 cases passed');
+  });
+
+  it('prints the whole narration of a failing turn, not the first screenful', () => {
+    const narration = `${'The Clifton flat is 1.25 lakh. '.repeat(12)}And the last one is at 1.9 lakh.`;
+    expect(narration.length).toBeGreaterThan(300);
+    const text = formatReport([
+      report({
+        passed: false,
+        turns: [
+          {
+            user: 'rent a flat in Clifton',
+            observed: {
+              userMessage: 'rent a flat in Clifton',
+              allowedText: 'rent a flat in Clifton',
+              searches: [{ purpose: 'rent' }],
+              listings: [],
+              narration,
+              errors: [],
+            },
+            verdict: { failures: ['price not in results: PKR 190,000'], warnings: [] },
+          },
+        ],
+      }),
+    ]);
+    expect(text).toContain('And the last one is at 1.9 lakh.');
+  });
 });

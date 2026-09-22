@@ -49,6 +49,12 @@ export interface CaseReport {
   name: string;
   why: string;
   passed: boolean;
+  /**
+   * Why the case never finished — a dead session, an upstream 500. It is not
+   * a graded failure but it isn't a pass either, so it gets its own mark: a
+   * case that couldn't run tells you nothing about the agent.
+   */
+  errored?: string;
   turns: TurnReport[];
 }
 
@@ -56,7 +62,8 @@ export interface CaseReport {
 export function formatReport(reports: CaseReport[]): string {
   const lines: string[] = [];
   for (const c of reports) {
-    lines.push(`${c.passed ? '✓' : '✗'} ${c.name} — ${c.why}`);
+    lines.push(`${c.errored ? '!' : c.passed ? '✓' : '✗'} ${c.name} — ${c.why}`);
+    if (c.errored) lines.push(`  ERROR ${c.errored}`);
     c.turns.forEach((t, i) => {
       const noisy = t.verdict.failures.length > 0 || t.verdict.warnings.length > 0;
       if (!noisy) return;
@@ -65,7 +72,10 @@ export function formatReport(reports: CaseReport[]): string {
       for (const w of t.verdict.warnings) lines.push(`    warn ${w}`);
       if (t.verdict.failures.length > 0) {
         lines.push(`    searches: ${JSON.stringify(t.observed.searches)}`);
-        lines.push(`    narration: ${t.observed.narration.replace(/\s+/g, ' ').slice(0, 300)}`);
+        // The whole reply, not the first 300 characters: the ungrounded price
+        // is as likely to be in the last sentence as the first, and a report
+        // that cuts it off sends the reader to the JSON to see what happened.
+        lines.push(`    narration: ${t.observed.narration.replace(/\s+/g, ' ')}`);
       }
     });
   }
