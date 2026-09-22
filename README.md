@@ -116,6 +116,18 @@ A buyer can book a viewing on any listing, checked live against the estate agent
 
 **A `503` from booking means the connection dropped, not that something broke** — most often because the OAuth consent screen is still in *Testing* status, which caps a refresh token at 7 days; a revoked connection looks identical. Either way the fix is the same: re-run `npm run connect:calendar`.
 
+## Evaluating the agent
+
+`npm run eval` replays ten scripted conversations against the live agent and grades each turn: did it search when it should (and only then), did every search carry the filters the message implied, did the intake ask the right question, and is every price and area in its reply actually in the listings it was shown. It runs the real chat loop in-process, so it grades exactly what the server does.
+
+```bash
+npm run eval                          # all cases, ~5 minutes, one session each
+npm run eval -- --case compare        # one case; repeat --case for several
+npm run eval -- --json eval.json      # keep the full transcript and verdicts
+```
+
+A non-zero exit means at least one case failed; the report names the turn, the failure, the filters actually used and the start of the reply. Cases live in `apps/server/src/eval/cases.ts`; each states *why* it exists, and its expected filters are a minimum, so the agent adding a filter the user implied is a warning rather than a failure. Run it before and after any change to the prompt, the lambda, or the model.
+
 ## Limits and recovery
 
 - **One turn at a time per chat.** A second message while a reply is streaming gets `409`. The UI only sends one message at a time, but a reload during a reply re-adopts the same chat, so typing immediately after that can hit it.
