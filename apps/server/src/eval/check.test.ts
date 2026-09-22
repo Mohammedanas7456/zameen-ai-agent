@@ -82,6 +82,14 @@ describe('findAreaMentions', () => {
   it('returns each name once', () => {
     expect(findAreaMentions('Clifton, then Clifton again', AREAS)).toEqual(['Clifton']);
   });
+
+  it('matches a hyphenated area against a spaced mention, and vice versa', () => {
+    expect(findAreaMentions('the 2-bed lounge flat in Gulistan-e-Jauhar Block 14', ['Gulistan-e-Jauhar', 'Gulistan-e-Jauhar - Block 14'])).toContain(
+      'Gulistan-e-Jauhar - Block 14',
+    );
+    const found = findAreaMentions('Clifton Block 9 has a verified 2-bed', ['Clifton', 'Clifton - Block 9', 'Clifton Block 9']);
+    expect(found).toHaveLength(new Set(found).size);
+  });
 });
 
 describe('compareFilters', () => {
@@ -144,6 +152,48 @@ describe('checkGrounding', () => {
     });
     expect(result).toEqual({ ungroundedPrices: [], ungroundedAreas: [] });
   });
+
+  it('grounds an area whose spelling in the path differs only by separators', () => {
+    const result = checkGrounding({
+      narration: 'the 2-bed lounge flat in Gulistan-e-Jauhar Block 14',
+      listings: [listingAt(125_000, 'Gulistan-e-Jauhar > Gulistan-e-Jauhar - Block 14')],
+      knownAreas: ['Gulistan-e-Jauhar', 'Gulistan-e-Jauhar - Block 14'],
+      allowedText: '',
+    });
+    expect(result.ungroundedAreas).toEqual([]);
+  });
+
+  it('grounds an area written with spaces against a path written with hyphens', () => {
+    const result = checkGrounding({
+      narration: 'Clifton Block 9 has a verified 2-bed',
+      listings: [listingAt(125_000, 'Clifton > Clifton - Block 9')],
+      knownAreas: ['Clifton', 'Clifton - Block 9', 'Clifton Block 9'],
+      allowedText: '',
+    });
+    expect(result.ungroundedAreas).toEqual([]);
+  });
+
+  it('grounds a mention that only the listing title names, not the path', () => {
+    const result = checkGrounding({
+      narration: 'in Khayaban-e-Shahbaz',
+      listings: [
+        { ...listingAt(125_000, 'DHA Defence > DHA Phase 6 > Bukhari Commercial'), title: '2 Bed Flat For Rent In Khayaban-e-Shahbaz' },
+      ],
+      knownAreas: ['Khayaban-e-Shahbaz', 'DHA Phase 6'],
+      allowedText: '',
+    });
+    expect(result.ungroundedAreas).toEqual([]);
+  });
+
+  it('still flags a sub-area neither the path nor the title names, even when its parent is grounded', () => {
+    const result = checkGrounding({
+      narration: 'a bargain in Clifton Block 2',
+      listings: [{ ...listingAt(125_000, 'Clifton > Clifton - Block 1'), title: 'Flat in Cliftonia' }],
+      knownAreas: ['Clifton', 'Clifton - Block 2'],
+      allowedText: '',
+    });
+    expect(result.ungroundedAreas).toEqual(['Clifton - Block 2']);
+  });
 });
 
 describe('evaluateTurn', () => {
@@ -178,9 +228,22 @@ describe('evaluateTurn', () => {
     expect(v.warnings).toEqual(['search 1: extra minBedrooms: 2']);
   });
 
-  it('fails on an ungrounded price, an error event, and a narration mismatch', () => {
+  it('fails on an unexpected area — the prompt forbids substituting one', () => {
     const v = evaluateTurn(
-      { searches: [{ purpose: 'rent' }], narration: /DHA/ },
+      { searches: [{ purpose: 'buy', propertyType: 'Houses', minBedrooms: 4 }] },
+      observed({ searches: [{ purpose: 'buy', area: 'clifton', propertyType: 'houses', minBedrooms: 4 }] }),
+      AREAS,
+    );
+    expect(v.failures).toEqual(['search 1: unexpected area: clifton']);
+    expect(v.warnings).toEqual([]);
+  });
+
+  it('fails on an ungrounded price, an error event, and a narration mismatch', () => {
+    // area: 'Clifton' matches the fixture's default search so this test's own
+    // failures — not the unrelated "unexpected area" check F4 added — are
+    // the only ones exercised here.
+    const v = evaluateTurn(
+      { searches: [{ purpose: 'rent', area: 'Clifton' }], narration: /DHA/ },
       observed({ narration: 'A flat at 2 lakh.', errors: ['Search failed: HTTP 503'] }),
       AREAS,
     );

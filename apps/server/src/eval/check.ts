@@ -89,12 +89,30 @@ export function extractPrices(text: string): number[] {
   return found;
 }
 
-/** Known area names present in the text as whole phrases, longest first. */
+/**
+ * Lowercase and collapse every run of whitespace and hyphen-family dashes to
+ * one space, so "Gulistan-e-Jauhar" and "Gulistan e Jauhar" — or a listing
+ * path that spells the same area with an en dash — compare equal. The corpus
+ * and the agent don't agree on which separator to use.
+ */
+function normaliseArea(s: string): string {
+  return s.toLowerCase().replace(/[\s\-–—]+/g, ' ').trim();
+}
+
+/**
+ * Known area names present in the text as whole phrases, longest first.
+ * Separators are normalised on both sides before matching, and a name is
+ * deduplicated by its normalised form — "Clifton - Block 9" and "Clifton
+ * Block 9" are the same area under two spellings, so only the one found
+ * first (the longer one, since it's tried first) is returned.
+ */
 export function findAreaMentions(text: string, knownAreas: readonly string[]): string[] {
-  const hay = text.toLowerCase();
+  const hay = normaliseArea(text);
   const found: string[] = [];
+  const seen = new Set<string>();
   for (const name of [...knownAreas].sort((a, b) => b.length - a.length)) {
-    const needle = name.toLowerCase();
+    const needle = normaliseArea(name);
+    if (seen.has(needle)) continue;
     let from = 0;
     while (from <= hay.length) {
       const at = hay.indexOf(needle, from);
@@ -102,7 +120,8 @@ export function findAreaMentions(text: string, knownAreas: readonly string[]): s
       const before = at === 0 ? ' ' : hay[at - 1]!;
       const afterChar = hay[at + needle.length] ?? ' ';
       if (!/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(afterChar)) {
-        if (!found.includes(name)) found.push(name);
+        found.push(name);
+        seen.add(needle);
         break;
       }
       from = at + 1;
@@ -186,11 +205,15 @@ export function checkGrounding({
     (p) => !near(listingPrices, p) && !near(allowedPrices, p),
   );
 
-  const paths = listings.map((l) => l.areaPath.toLowerCase());
-  const allowedAreas = findAreaMentions(allowedText, knownAreas).map((a) => a.toLowerCase());
+  const paths = listings.map((l) => normaliseArea(l.areaPath));
+  // The model is shown each listing's title as well as its path, so a
+  // sub-area named only in the title (not broken out in the path) still
+  // counts as something the model could have read, not invented.
+  const titles = listings.map((l) => normaliseArea(l.title));
+  const allowedAreas = findAreaMentions(allowedText, knownAreas).map((a) => normaliseArea(a));
   const ungroundedAreas = findAreaMentions(narration, knownAreas).filter((name) => {
-    const needle = name.toLowerCase();
-    return !paths.some((p) => p.includes(needle)) && !allowedAreas.includes(needle);
+    const needle = normaliseArea(name);
+    return !paths.some((p) => p.includes(needle)) && !titles.some((t) => t.includes(needle)) && !allowedAreas.includes(needle);
   });
 
   return { ungroundedPrices, ungroundedAreas };
@@ -239,7 +262,13 @@ export function evaluateTurn(
       const diff = compareFilters(wanted, actual);
       for (const m of diff.missing) failures.push(`search ${i + 1}: missing ${m}`);
       for (const m of diff.different) failures.push(`search ${i + 1}: ${m}`);
-      for (const m of diff.extra) warnings.push(`search ${i + 1}: extra ${m}`);
+      for (const m of diff.extra) {
+        // The prompt tells the agent never to substitute an area of its own;
+        // an extra area is that rule broken, not a helpful addition, so it
+        // fails the turn instead of just being noted.
+        if (m.startsWith('area:')) failures.push(`search ${i + 1}: unexpected ${m}`);
+        else warnings.push(`search ${i + 1}: extra ${m}`);
+      }
     });
   }
 
