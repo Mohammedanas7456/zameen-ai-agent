@@ -28,7 +28,7 @@ const UNIT = '(?:lakhs?|lac|crores?|cr|k|thousands?)';
  * before this runs (see the classification note in `extractPrices`), leaving
  * `-1,600 sq ft` behind for a moment on the way there.
  */
-const NOT_A_PRICE = /^-?(?:sq|sqft|sq\.|sqm|square|bed|beds|bedroom|bedrooms|bath|baths|bathroom|bathrooms|floor|floors|storey|storeys|story|stories|listing|listings|match|matches|option|options|result|results|property|properties|flat|flats|house|houses|marla|kanal|yard|yards|unit|units|km|min|mins|minute|minutes|hour|hours|day|days|month|months|year|years|%|of|more|further|search|searches)\b/i;
+const NOT_A_PRICE = /^-?(?:sq|sqft|sq\.|sqm|square|feet|ft|bed|beds|bedroom|bedrooms|bath|baths|bathroom|bathrooms|floor|floors|storey|storeys|story|stories|listing|listings|match|matches|option|options|result|results|property|properties|flat|flats|house|houses|marla|kanal|acres|yard|yards|unit|units|km|min|mins|minute|minutes|hour|hours|day|days|month|months|year|years|people|persons|residents|families|%|of|more|further|search|searches)\b/i;
 
 /** A price stated as a gap ("40k less") is not a price anything is listed at. */
 const DIFFERENCE = /\b(?:less|more|cheaper|dearer|higher|lower|apart|difference|extra|saving|savings|off)\b/i;
@@ -274,12 +274,18 @@ export interface GroundingResult {
 
 /**
  * An offer of a next step, however it's phrased — its figures are options,
- * not claims. The verb is left open after "I can"/"I could" because the agent
- * picks a fresh one every time ("pull up", "widen", "rerun"), and the
- * conditional tails ("if you like", "let me know") mark an offer on their own.
+ * not claims. The verb after "I can"/"I could" is a closed list of the ones
+ * the agent actually reaches for when proposing another search ("pull up",
+ * "widen", "rerun"), not `\w+` — that was loose enough to also swallow "I can
+ * see one at 3 lakh in DHA Phase 6", an ordinary claim that merely opens with
+ * "I can". The conditional tails ("if you like", "let me know") mark an offer
+ * on their own.
  */
-const OFFER =
-  /\b(?:want me to|shall i|should i|would you like|could (?:also )?(?:check|try|look)|happy to|i can (?:also )?\w+|i could (?:also )?\w+|if you(?:'d)? like|if you want|let me know)\b/i;
+const OFFER_VERB = '(?:check|search|look|pull|widen|rerun|re-run|try|show|run|narrow|filter)';
+const OFFER = new RegExp(
+  `\\b(?:want me to|shall i|should i|would you like|could (?:also )?(?:check|try|look)|happy to|i can (?:also )?${OFFER_VERB}|i could (?:also )?${OFFER_VERB}|if you(?:'d)? like|if you want|let me know)\\b`,
+  'i',
+);
 
 /**
  * A clause boundary: a stop mark, a semicolon, or a spaced dash.

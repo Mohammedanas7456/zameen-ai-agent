@@ -90,6 +90,12 @@ describe('extractPrices', () => {
     expect(extractPrices('PKR 1.25 lakh')).toEqual([125_000]);
     expect(extractPrices('a bargain at 90,000')).toEqual([90_000]);
   });
+
+  it('treats other count nouns the same way as sizes and bedrooms', () => {
+    expect(extractPrices('at 3 thousand people')).toEqual([]);
+    expect(extractPrices('at 5 thousand feet')).toEqual([]);
+    expect(extractPrices('at 20 thousand')).toEqual([20_000]);
+  });
 });
 
 describe('findAreaMentions', () => {
@@ -167,6 +173,12 @@ describe('claimSentences', () => {
 
   it('keeps a plain statement whole', () => {
     expect(claimSentences('Clifton has one at 1.25 lakh.')).toBe('Clifton has one at 1.25 lakh.');
+  });
+
+  it('keeps "I can" as a claim when the verb after it isn\'t an offer verb', () => {
+    expect(claimSentences('I can see one at 3 lakh in DHA Phase 6.')).toBe(
+      'I can see one at 3 lakh in DHA Phase 6.',
+    );
   });
 });
 
@@ -345,6 +357,16 @@ describe('checkGrounding', () => {
       allowedText: '',
     });
     expect(result).toEqual({ ungroundedPrices: [], ungroundedAreas: [] });
+  });
+
+  it('still flags an invented listing phrased as "I can see", the negative control against the offer above', () => {
+    const result = checkGrounding({
+      narration: 'I can see one at 3 lakh in DHA Phase 6.',
+      listings: [listingAt(125_000)], // Clifton only — see LISTING.areaPath
+      knownAreas: AREAS,
+      allowedText: '',
+    });
+    expect(result).toEqual({ ungroundedPrices: [300_000], ungroundedAreas: ['DHA Phase 6'] });
   });
 
   it('does not let a title ground an area that is merely a substring of one of its words', () => {
