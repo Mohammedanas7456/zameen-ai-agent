@@ -129,6 +129,22 @@ describe('findAreaMentions', () => {
       findAreaMentions('Two in PECHS Block 6; the PECHS Block 6 one is verified.', ['Block 6', 'PECHS Block 6', 'PECHS']),
     ).toEqual(['PECHS Block 6']);
   });
+
+  it('suppresses a shorter match that overlaps a claimed span without lying entirely inside it', () => {
+    // "nazimabad 3" starts inside "north nazimabad"'s claimed span [3, 18) and
+    // runs past it to 20 — never fully inside, so the old "contained" rule let
+    // it through and grounding flagged it as a second, invented area.
+    expect(findAreaMentions('33 North Nazimabad 3-bed rentals matched', ['North Nazimabad', 'Nazimabad 3'])).toEqual([
+      'North Nazimabad',
+    ]);
+  });
+
+  it('still finds a short name where it stands on its own, outside any claimed span', () => {
+    expect(findAreaMentions('Nazimabad 3 is near North Nazimabad', ['North Nazimabad', 'Nazimabad 3'])).toEqual([
+      'North Nazimabad',
+      'Nazimabad 3',
+    ]);
+  });
 });
 
 describe('claimSentences', () => {

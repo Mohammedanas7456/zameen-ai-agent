@@ -176,10 +176,14 @@ function containsPhrase(hay: string, needle: string): boolean {
  *
  * The live facets include generic names like "Block 6" that also occur as
  * the tail of a longer name ("PECHS Block 6"). Once a name claims a span of
- * the text, a shorter name is not allowed to match inside that span — it
- * would just be re-reporting the same mention under a vaguer name — so a
- * candidate occurrence fully inside an already-claimed range is skipped in
- * favour of another occurrence of that same name elsewhere in the text.
+ * the text, a shorter name is not allowed to match anywhere that overlaps it
+ * — it would just be re-reporting the same mention under a vaguer name — so
+ * a candidate occurrence that overlaps an already-claimed range is skipped in
+ * favour of another occurrence of that same name elsewhere in the text. A
+ * shorter match doesn't have to sit fully inside the longer one to be the
+ * same mention: "Nazimabad 3" starting inside "North Nazimabad" and running
+ * past its end is still just that one mention read under a second name, not
+ * a distinct area next to it.
  *
  * A name claims *every* one of its occurrences, not only the first: the agent
  * repeats an area name across a reply ("Two in PECHS Block 6; the PECHS Block
@@ -199,8 +203,12 @@ export function findAreaMentions(text: string, knownAreas: readonly string[]): s
       const at = hay.indexOf(needle, from);
       if (at === -1) break;
       const end = at + needle.length;
-      const insideClaimedSpan = claimed.some(([start, stop]) => at >= start && end <= stop);
-      if (!insideClaimedSpan && isWordBreak(hay[at - 1]) && isWordBreak(hay[end])) {
+      // Overlap, not containment: a shorter match that only partly sits inside
+      // a claimed span ("nazimabad 3" starting inside "north nazimabad" and
+      // running past it) is still the same mention re-read under a vaguer
+      // name, so it must be skipped too, not just the fully-contained case.
+      const overlapsClaimedSpan = claimed.some(([start, stop]) => at < stop && end > start);
+      if (!overlapsClaimedSpan && isWordBreak(hay[at - 1]) && isWordBreak(hay[end])) {
         if (!seen.has(needle)) {
           found.push(name);
           seen.add(needle);
