@@ -13,7 +13,9 @@ export interface EvalCase {
 }
 
 const ASKS_FOR_AREA = /area|town|where|location|neighbourhood|neighborhood/i;
-const ASKS_RENT_OR_BUY = /rent|buy/i;
+// Anchored on word boundaries: an unanchored /rent|buy/ also matches "current"
+// and "buyer's market", so it would pass a turn that never asked the question.
+const ASKS_RENT_OR_BUY = /\b(?:rent|renting|buy|buying|purchase)\b/i;
 
 /**
  * The conversations the agent must get right.
@@ -30,7 +32,13 @@ export const CASES: EvalCase[] = [
     turns: [
       {
         user: 'Rent a 2 bed flat in Clifton, something sea facing',
-        expect: { searches: [{ purpose: 'rent', area: 'Clifton', propertyType: 'Flats', minBedrooms: 2 }] },
+        expect: {
+          searches: [{ purpose: 'rent', area: 'Clifton', propertyType: 'Flats', minBedrooms: 2 }],
+          // "Sea facing" is a ranking phrase, not a constraint: a floor or a
+          // budget invented out of it would quietly hide listings the user
+          // asked to see.
+          forbidden: ['floor', 'maxPrice', 'minPrice'],
+        },
       },
     ],
   },
@@ -62,7 +70,11 @@ export const CASES: EvalCase[] = [
     turns: [
       {
         user: 'Rent a flat in Atlantis Heights Phase 9',
-        expect: { searches: [], narration: /not|don't|no |isn't|closest|instead|alternative|nearest/i },
+        // Anchored, so "another" and "notice" can't stand in for a refusal.
+        expect: {
+          searches: [],
+          narration: /\b(?:not|don't|isn't|no listings|closest|instead|alternative|nearest)\b/i,
+        },
       },
     ],
   },
@@ -116,6 +128,9 @@ export const CASES: EvalCase[] = [
         user: '10 bedroom penthouse in Clifton for rent under 50000',
         expect: {
           searches: [{ purpose: 'rent', area: 'Clifton', propertyType: 'Penthouse', minBedrooms: 10, maxPrice: 50_000 }],
+          // Nothing matched, and the prompt invites a relaxation — running the
+          // relaxed search itself is good behaviour, not a regression.
+          allowExtraSearches: true,
           narration: /relax|widen|anywhere|budget|bedroom|nothing|no listings|none|didn't|did not/i,
           skipGrounding: true,
         },
