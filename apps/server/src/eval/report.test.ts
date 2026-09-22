@@ -1,5 +1,6 @@
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { formatReport, parseArgs, type CaseReport } from './report.js';
+import { formatReport, parseArgs, resolveOutputPath, type CaseReport } from './report.js';
 
 describe('parseArgs', () => {
   it('defaults to every case and no JSON file', () => {
@@ -15,6 +16,20 @@ describe('parseArgs', () => {
 
   it('rejects an unknown flag', () => {
     expect(() => parseArgs(['--bogus'])).toThrow(/unknown argument: --bogus/);
+  });
+});
+
+describe('resolveOutputPath', () => {
+  it('leaves an absolute path unchanged', () => {
+    expect(resolveOutputPath('/tmp/eval.json', '/repo', '/repo/apps/server')).toBe('/tmp/eval.json');
+  });
+
+  it('joins a relative path to initCwd — where `npm run` was invoked — when it is set', () => {
+    expect(resolveOutputPath('eval.json', '/repo', '/repo/apps/server')).toBe(join('/repo', 'eval.json'));
+  });
+
+  it('joins a relative path to cwd when there is no initCwd', () => {
+    expect(resolveOutputPath('eval.json', undefined, '/repo/apps/server')).toBe(join('/repo/apps/server', 'eval.json'));
   });
 });
 

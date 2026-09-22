@@ -17,7 +17,7 @@ import { getFacets } from '../facets.js';
 import { createSession, searchListings } from '../vectara.js';
 import { CASES, type EvalCase } from './cases.js';
 import { evaluateTurn, type Observed } from './check.js';
-import { formatReport, parseArgs, type CaseReport, type TurnReport } from './report.js';
+import { formatReport, parseArgs, resolveOutputPath, type CaseReport, type TurnReport } from './report.js';
 
 async function runCase(c: EvalCase, knownAreas: readonly string[]): Promise<CaseReport> {
   const sessionKey = await createSession(`eval-${c.name}-${Date.now()}`);
@@ -77,8 +77,12 @@ async function main(): Promise<void> {
 
   console.log(`\n${formatReport(reports)}`);
   if (options.json) {
-    await writeFile(options.json, `${JSON.stringify(reports, null, 2)}\n`);
-    console.log(`full report written to ${options.json}`);
+    // `npm run eval` runs with cwd in apps/server; INIT_CWD is where the
+    // person actually typed the command, which is what a relative path here
+    // should be read against.
+    const jsonPath = resolveOutputPath(options.json, process.env['INIT_CWD'], process.cwd());
+    await writeFile(jsonPath, `${JSON.stringify(reports, null, 2)}\n`);
+    console.log(`full report written to ${jsonPath}`);
   }
   process.exitCode = reports.every((r) => r.passed) ? 0 : 1;
 }

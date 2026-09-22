@@ -126,6 +126,8 @@ npm run eval -- --case compare        # one case; repeat --case for several
 npm run eval -- --json eval.json      # keep the full transcript and verdicts
 ```
 
+A relative `--json` path is taken from the directory you ran npm in.
+
 A non-zero exit means at least one case failed; the report names the turn, the failure, the filters actually used and the start of the reply. Cases live in `apps/server/src/eval/cases.ts`; each states *why* it exists, and its expected filters are a minimum, so the agent adding a filter the user implied is a warning rather than a failure. Run it before and after any change to the prompt, the lambda, or the model.
 
 ## Limits and recovery

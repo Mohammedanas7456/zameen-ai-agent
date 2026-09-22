@@ -1,3 +1,4 @@
+import { isAbsolute, join } from 'node:path';
 import type { Observed, TurnVerdict } from './check.js';
 
 export interface CliOptions {
@@ -23,6 +24,19 @@ export function parseArgs(argv: string[]): CliOptions {
     }
   }
   return options;
+}
+
+/**
+ * `npm run eval` always executes with cwd set to `apps/server` (npm's own
+ * workspace-script behaviour), so a relative `--json` path resolved against
+ * `process.cwd()` lands somewhere the person who typed the command never
+ * meant. `INIT_CWD` — npm's record of where it was invoked from — is what a
+ * relative path is actually meant to be read against; a bare `cwd` is kept
+ * only as the fallback for when something runs this outside npm.
+ */
+export function resolveOutputPath(path: string, initCwd: string | undefined, cwd: string): string {
+  if (isAbsolute(path)) return path;
+  return join(initCwd ?? cwd, path);
 }
 
 export interface TurnReport {
