@@ -174,6 +174,14 @@ function floorPhrase(listing: Pick<Listing, 'floor' | 'floorNum'>): string | nul
 const TITLE_MAX = 120;
 
 /**
+ * How many listings the agent is shown. The user's grid gets every match; the
+ * agent gets this many, so anything it says about a ninth listing it cannot
+ * have read. Exported because the eval grades the reply against exactly what
+ * the agent saw.
+ */
+export const LISTINGS_SHOWN_TO_AGENT = 8;
+
+/**
  * Render listings as compact text for the agent's follow-up turn.
  *
  * The agent never sees raw search output, so this is the only description of
@@ -182,7 +190,7 @@ const TITLE_MAX = 120;
  * from the pipeline's LLM extraction, so it is flattened to one line and the
  * titles are labelled as data before they sit next to our instructions.
  */
-export function listingsForAgent(listings: Listing[], max = 8): string {
+export function listingsForAgent(listings: Listing[], max = LISTINGS_SHOWN_TO_AGENT): string {
   if (listings.length === 0) return 'No listings matched those criteria.';
 
   const lines = listings.slice(0, max).map((l, i) => {

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { Listing } from '@zameen/shared';
 import {
   checkGrounding,
+  claimSentences,
   compareFilters,
   evaluateTurn,
   extractPrices,
@@ -75,6 +76,20 @@ describe('extractPrices', () => {
     expect(extractPrices('PKR 75 thousand')).toEqual([75_000]);
     expect(extractPrices('from PKR 75 thousand to 1.6 lakh')).toEqual([75_000, 160_000]);
   });
+
+  it('reads a bare thousand-scale price stated after a money preposition', () => {
+    expect(extractPrices('a 3-bed in DHA Phase 6 at 95 thousand')).toEqual([95_000]);
+    expect(extractPrices('asking for 90 thousand')).toEqual([90_000]);
+    expect(extractPrices('around 3 thousand people')).toEqual([]);
+  });
+
+  it('ignores a threshold the reply is filtering by, not a price anything is listed at', () => {
+    expect(extractPrices('everything under 2 lakh here is a 2-bed')).toEqual([]);
+    expect(extractPrices('nothing below PKR 90,000, and none above 3 crore')).toEqual([]);
+    expect(extractPrices('up to 1.5 lakh, at least 75,000, within 2 crore')).toEqual([]);
+    expect(extractPrices('PKR 1.25 lakh')).toEqual([125_000]);
+    expect(extractPrices('a bargain at 90,000')).toEqual([90_000]);
+  });
 });
 
 describe('findAreaMentions', () => {
@@ -107,6 +122,35 @@ describe('findAreaMentions', () => {
       'PECHS Block 6',
       'Block 5',
     ]);
+  });
+
+  it('claims every occurrence of a long name, so a short one inside the second is suppressed too', () => {
+    expect(
+      findAreaMentions('Two in PECHS Block 6; the PECHS Block 6 one is verified.', ['Block 6', 'PECHS Block 6', 'PECHS']),
+    ).toEqual(['PECHS Block 6']);
+  });
+});
+
+describe('claimSentences', () => {
+  it('drops an offer phrased as a statement, with no question mark to give it away', () => {
+    expect(claimSentences('I can also pull up DHA Phase 6 if you like.')).toBe('');
+    expect(claimSentences('I could widen the search.')).toBe('');
+    expect(claimSentences('Let me know which suits you.')).toBe('');
+  });
+
+  it('keeps the claim an offer is tacked onto after a dash or a semicolon', () => {
+    expect(claimSentences("There's also a 3-bed at 95 thousand — want me to pull it up?")).toBe(
+      "There's also a 3-bed at 95 thousand",
+    );
+    expect(claimSentences('A 2-bed at 3 lakh; want me to widen?')).toBe('A 2-bed at 3 lakh;');
+  });
+
+  it('drops a bare question, which is an offer even without a marker', () => {
+    expect(claimSentences('Any interest in DHA Phase 6?')).toBe('');
+  });
+
+  it('keeps a plain statement whole', () => {
+    expect(claimSentences('Clifton has one at 1.25 lakh.')).toBe('Clifton has one at 1.25 lakh.');
   });
 });
 
@@ -236,12 +280,55 @@ describe('checkGrounding', () => {
 
   it('exempts only the question price, not the statement price ahead of it', () => {
     const result = checkGrounding({
-      narration: 'Nothing under 1 lakh. Want me to try under 1.5 lakh?',
+      // "Nothing under 1 lakh" would say the same thing, but a price after
+      // "under" is a threshold the reply is filtering by and no longer
+      // extracted at all (see extractPrices), which would prove nothing here.
+      narration: 'The cheapest is at 1 lakh. Want me to try under 1.5 lakh?',
       listings: [listingAt(140_000)],
       knownAreas: AREAS,
       allowedText: '',
     });
     expect(result.ungroundedPrices).toEqual([100_000]);
+  });
+
+  it('flags a claim an offer is tacked onto after a dash', () => {
+    const result = checkGrounding({
+      narration: "There's also a 3-bed in DHA Phase 6 at 95 thousand — want me to pull it up?",
+      listings: [listingAt(118_000), listingAt(145_000), listingAt(175_000)],
+      knownAreas: ['Clifton', 'DHA Phase 6'],
+      allowedText: '',
+    });
+    expect(result).toEqual({ ungroundedPrices: [95_000], ungroundedAreas: ['DHA Phase 6'] });
+  });
+
+  it('flags a claim an offer is tacked onto after a semicolon', () => {
+    const result = checkGrounding({
+      narration: 'A 2-bed in DHA Phase 6 at 3 lakh; want me to widen?',
+      listings: [listingAt(118_000), listingAt(145_000), listingAt(175_000)],
+      knownAreas: ['Clifton', 'DHA Phase 6'],
+      allowedText: '',
+    });
+    expect(result).toEqual({ ungroundedPrices: [300_000], ungroundedAreas: ['DHA Phase 6'] });
+  });
+
+  it('flags nothing in a bare question that floats an area', () => {
+    const result = checkGrounding({
+      narration: 'Any interest in DHA Phase 6?',
+      listings: [listingAt(118_000)],
+      knownAreas: ['Clifton', 'DHA Phase 6'],
+      allowedText: '',
+    });
+    expect(result).toEqual({ ungroundedPrices: [], ungroundedAreas: [] });
+  });
+
+  it('flags nothing in an offer to look somewhere else, however it is phrased', () => {
+    const result = checkGrounding({
+      narration: 'Clifton has one at 1.18 lakh. I can also pull up DHA Phase 6 if you like.',
+      listings: [listingAt(118_000)],
+      knownAreas: ['Clifton', 'DHA Phase 6'],
+      allowedText: '',
+    });
+    expect(result).toEqual({ ungroundedPrices: [], ungroundedAreas: [] });
   });
 
   it('does not let a title ground an area that is merely a substring of one of its words', () => {
@@ -268,6 +355,7 @@ describe('checkGrounding', () => {
 describe('evaluateTurn', () => {
   const observed = (over: Partial<Parameters<typeof evaluateTurn>[1]>) => ({
     userMessage: 'rent a 2 bed flat in Clifton',
+    allowedText: 'rent a 2 bed flat in Clifton',
     searches: [{ purpose: 'rent' as const, area: 'clifton', minBedrooms: 2 }],
     listings: [listingAt(125_000)],
     narration: 'One Clifton flat at 1.25 lakh.',
@@ -330,5 +418,94 @@ describe('evaluateTurn', () => {
 
   it('fails an empty narration', () => {
     expect(evaluateTurn({}, observed({ narration: '   ' }), AREAS).failures).toEqual(['empty narration']);
+  });
+
+  it('grades against the listings the agent was handed', () => {
+    // The runner passes only the listings the agent was shown, so a price from
+    // the ninth result is ungrounded exactly as an invented one would be.
+    const v = evaluateTurn({}, observed({ narration: 'One at 2.9 lakh.' }), AREAS);
+    expect(v.failures).toEqual(['price not in results: PKR 290,000']);
+  });
+
+  it('grounds a price and an area the user named in an earlier turn', () => {
+    const v = evaluateTurn(
+      { searches: [{ purpose: 'rent', area: 'Clifton' }] },
+      observed({
+        userMessage: 'and 3 bedrooms',
+        allowedText: 'rent in DHA Phase 6\nand 3 bedrooms',
+        searches: [{ purpose: 'rent', area: 'clifton' }],
+        narration: 'Nothing in DHA Phase 6 yet, but Clifton has one at 1.25 lakh.',
+      }),
+      AREAS,
+    );
+    expect(v.failures).toEqual([]);
+  });
+
+  it('grounds a reply that answers the budget the user set two turns ago', () => {
+    const v = evaluateTurn(
+      {},
+      observed({
+        userMessage: 'any area',
+        allowedText: 'buy a house under 2.5 crore\nany area',
+        listings: [listingAt(20_000_000, 'Clifton')],
+        narration: 'Nothing under 2.5 crore, but Clifton has one at 2 crore.',
+      }),
+      AREAS,
+    );
+    expect(v.failures).toEqual([]);
+  });
+
+  it('allows an extra search when the case says so, and warns about it', () => {
+    const v = evaluateTurn(
+      { searches: [{ purpose: 'rent', area: 'Clifton' }], allowExtraSearches: true },
+      observed({
+        searches: [
+          { purpose: 'rent', area: 'clifton' },
+          { purpose: 'rent', area: 'clifton', minBedrooms: 2 },
+        ],
+      }),
+      AREAS,
+    );
+    expect(v.failures).toEqual([]);
+    expect(v.warnings).toEqual(['search 2: unexpected extra search']);
+  });
+
+  it('still fails a missing search when extra ones are allowed', () => {
+    const v = evaluateTurn(
+      { searches: [{ purpose: 'rent', area: 'Clifton' }], allowExtraSearches: true },
+      observed({ searches: [] }),
+      AREAS,
+    );
+    expect(v.failures).toEqual(['expected at least 1 search(es), got 0']);
+  });
+
+  it('fails a forbidden filter and an invented budget, and still only warns about an extra bedroom count', () => {
+    const v = evaluateTurn(
+      { searches: [{ purpose: 'rent', area: 'Clifton' }], forbidden: ['floor'] },
+      observed({ searches: [{ purpose: 'rent', area: 'clifton', floor: 'ground', maxPrice: 200_000, minBedrooms: 2 }] }),
+      AREAS,
+    );
+    expect(v.failures).toEqual([
+      'search 1: forbidden floor: ground',
+      'search 1: unexpected budget: maxPrice: 200000',
+    ]);
+    expect(v.warnings).toEqual(['search 1: extra floor: ground', 'search 1: extra minBedrooms: 2']);
+  });
+
+  it('fails a fixture reply that invents a listing, a price and an area', () => {
+    const v = evaluateTurn(
+      { searches: [{ purpose: 'rent', area: 'Clifton' }] },
+      observed({
+        searches: [{ purpose: 'rent', area: 'clifton' }],
+        listings: [listingAt(125_000, 'Clifton > Clifton - Block 1')],
+        narration:
+          "Clifton Block 1 has one at 1.25 lakh. There's also a 4-bed in DHA Phase 6 at 95 thousand — want me to pull it up?",
+      }),
+      AREAS,
+    );
+    expect(v.failures).toEqual([
+      'price not in results: PKR 95,000',
+      'area not in results: DHA Phase 6',
+    ]);
   });
 });

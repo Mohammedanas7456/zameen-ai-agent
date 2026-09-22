@@ -41,7 +41,14 @@ describe('formatReport', () => {
     turns: [
       {
         user: 'rent a flat',
-        observed: { userMessage: 'rent a flat', searches: [{ purpose: 'rent' }], listings: [], narration: 'ok', errors: [] },
+        observed: {
+          userMessage: 'rent a flat',
+          allowedText: 'rent a flat',
+          searches: [{ purpose: 'rent' }],
+          listings: [],
+          narration: 'ok',
+          errors: [],
+        },
         verdict: { failures: [], warnings: [] },
       },
     ],
@@ -61,7 +68,14 @@ describe('formatReport', () => {
         turns: [
           {
             user: 'rent a flat in Clifton',
-            observed: { userMessage: 'rent a flat in Clifton', searches: [], listings: [], narration: 'Which area?', errors: [] },
+            observed: {
+              userMessage: 'rent a flat in Clifton',
+              allowedText: 'rent a flat in Clifton',
+              searches: [],
+              listings: [],
+              narration: 'Which area?',
+              errors: [],
+            },
             verdict: { failures: ['expected 1 search(es), got 0'], warnings: ['search 1: extra floor: ground'] },
           },
         ],

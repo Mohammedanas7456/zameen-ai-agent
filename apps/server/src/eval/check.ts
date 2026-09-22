@@ -33,6 +33,24 @@ const NOT_A_PRICE = /^-?(?:sq|sqft|sq\.|sqm|square|bed|beds|bedroom|bedrooms|bat
 /** A price stated as a gap ("40k less") is not a price anything is listed at. */
 const DIFFERENCE = /\b(?:less|more|cheaper|dearer|higher|lower|apart|difference|extra|saving|savings|off)\b/i;
 
+/**
+ * A price the reply is filtering *by* ("everything under 2 lakh", "nothing
+ * below 90,000") is a restatement of the constraint, not a claim that any
+ * listing costs that — grading it as one fails correct replies. Matched
+ * against the few words in front of the number, so only the threshold word
+ * nearest it counts.
+ */
+const THRESHOLD = /\b(?:under|below|over|above|up to|less than|more than|at most|at least|within)$/i;
+
+/**
+ * Words that put a bare number in a price frame. "thousand" is an ordinary
+ * English word, so a unit-less "3 thousand people" must not become a price;
+ * but "at 95 thousand" is money as surely as "PKR 95 thousand" is, and the
+ * agent writes it that way often enough that letting it through unchecked
+ * would leave an invented price ungraded.
+ */
+const MONEY_PREPOSITION = /\b(?:at|for)\s*$/i;
+
 function toNumber(raw: string): number {
   return Number.parseFloat(raw.replace(/,/g, ''));
 }
@@ -70,6 +88,12 @@ export function extractPrices(text: string): number[] {
     const nextWords = after.split(/\s+/).slice(0, 6).join(' ');
     if (DIFFERENCE.test(nextWords)) continue;
 
+    // Three words is enough to see a threshold phrase ("up to", "at least")
+    // whole without reaching back into the previous clause.
+    const before = normalised.slice(0, match.index ?? 0);
+    const prevWords = before.trim().split(/\s+/).slice(-3).join(' ');
+    if (THRESHOLD.test(prevWords)) continue;
+
     let value: number | null = null;
     if (unit) {
       const lowerUnit = unit.toLowerCase();
@@ -86,6 +110,7 @@ export function extractPrices(text: string): number[] {
         if (NOT_A_PRICE.test(classify)) continue;
         else if (currency) value = toNumber(raw) * multiplier;
         else if (raw.includes(',') && toNumber(raw) >= 1000) value = toNumber(raw) * multiplier;
+        else if (MONEY_PREPOSITION.test(prevWords)) value = toNumber(raw) * multiplier;
       }
     } else {
       // A number with neither unit nor currency, sat in front of "- <number>",
@@ -98,7 +123,14 @@ export function extractPrices(text: string): number[] {
       else if (raw.includes(',') && toNumber(raw) >= 1000) value = toNumber(raw);
     }
 
-    if (value !== null && Number.isFinite(value) && !found.includes(value)) found.push(value);
+    // Rounded because a unit multiplier goes through floating point ("1.15
+    // lakh" lands a fraction under 115,000), and a report line reading
+    // "PKR 114,999.99999999999" would send the reader hunting a bug in the
+    // agent that is really one in this arithmetic.
+    if (value !== null && Number.isFinite(value)) {
+      const rounded = Math.round(value);
+      if (!found.includes(rounded)) found.push(rounded);
+    }
   }
   return found;
 }
@@ -148,6 +180,11 @@ function containsPhrase(hay: string, needle: string): boolean {
  * would just be re-reporting the same mention under a vaguer name — so a
  * candidate occurrence fully inside an already-claimed range is skipped in
  * favour of another occurrence of that same name elsewhere in the text.
+ *
+ * A name claims *every* one of its occurrences, not only the first: the agent
+ * repeats an area name across a reply ("Two in PECHS Block 6; the PECHS Block
+ * 6 one is verified"), and leaving the later ones unclaimed would let "Block
+ * 6" match inside the second mention and report the same area twice.
  */
 export function findAreaMentions(text: string, knownAreas: readonly string[]): string[] {
   const hay = normaliseArea(text);
@@ -164,12 +201,15 @@ export function findAreaMentions(text: string, knownAreas: readonly string[]): s
       const end = at + needle.length;
       const insideClaimedSpan = claimed.some(([start, stop]) => at >= start && end <= stop);
       if (!insideClaimedSpan && isWordBreak(hay[at - 1]) && isWordBreak(hay[end])) {
-        found.push(name);
-        seen.add(needle);
+        if (!seen.has(needle)) {
+          found.push(name);
+          seen.add(needle);
+        }
         claimed.push([at, end]);
-        break;
+        from = end;
+      } else {
+        from = at + 1;
       }
-      from = at + 1;
     }
   }
   return found;
@@ -224,26 +264,51 @@ export interface GroundingResult {
   ungroundedAreas: string[];
 }
 
-/** An offer of a next step, however it's phrased — its figures are options, not claims. */
+/**
+ * An offer of a next step, however it's phrased — its figures are options,
+ * not claims. The verb is left open after "I can"/"I could" because the agent
+ * picks a fresh one every time ("pull up", "widen", "rerun"), and the
+ * conditional tails ("if you like", "let me know") mark an offer on their own.
+ */
 const OFFER =
-  /\b(?:want me to|shall i|should i|would you like|could (?:also )?(?:check|try|look)|happy to|i can (?:also )?(?:check|search|look)|let me know if)\b/i;
+  /\b(?:want me to|shall i|should i|would you like|could (?:also )?(?:check|try|look)|happy to|i can (?:also )?\w+|i could (?:also )?\w+|if you(?:'d)? like|if you want|let me know)\b/i;
 
 /**
- * The claims in `text`, with any question or offer of a next step removed.
+ * A clause boundary: a stop mark, a semicolon, or a spaced dash.
+ *
+ * The stop mark only ends a clause when whitespace or the end of the text
+ * follows, so a decimal price like "1.4 lakh" is never mistaken for one. The
+ * dash match is zero-width — it splits *before* the dash rather than eating
+ * it — so a range written "1.25 – 1.6 lakh" survives being taken apart and
+ * put back together with its dash still in place.
+ */
+const CLAUSE_BREAK = /(?<=[.!?;])(?=\s|$)|(?=\s[–—]\s)/;
+
+/**
+ * The claims in `text`, with every offer of a next step removed.
+ *
  * The agent always ends a reply by proposing what to try next ("Want me to
  * also check nearby PECHS Block 6 …?") and that proposal's prices and areas
  * are options being floated, not statements about the listings shown — so
- * grounding must never see them. Split into sentences first: a stop mark
- * ([.!?]) only ends a sentence when followed by whitespace or the end of the
- * text, so a decimal price like "1.4 lakh" is never mistaken for one. Then
- * drop any sentence that ends in "?", or that offers to do more even when
- * phrased as a statement with no "?" at all.
+ * grounding must never see them. But it just as often tacks the offer onto
+ * the end of a claim ("…a 3-bed in DHA Phase 6 at 95 thousand — want me to
+ * pull it up?"), and dropping that whole sentence would take the invented
+ * listing with it. So each clause is cut at its *earliest* offer marker and
+ * only the text in front of it is kept; a clause that is purely a question,
+ * with no marker at all, is an offer too and goes entirely.
  */
-function claimSentences(text: string): string {
+export function claimSentences(text: string): string {
   return text
-    .split(/(?<=[.!?])(?=\s|$)/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0 && !s.endsWith('?') && !OFFER.test(s))
+    .split(CLAUSE_BREAK)
+    .map((clause) => {
+      const trimmed = clause.trim();
+      const offer = OFFER.exec(trimmed);
+      // The dash that introduced the offer is left behind by the cut; it
+      // would otherwise glue two kept clauses into a range that isn't there.
+      if (offer) return trimmed.slice(0, offer.index).replace(/[\s–—-]+$/, '');
+      return trimmed.endsWith('?') ? '' : trimmed;
+    })
+    .filter((clause) => clause.length > 0)
     .join(' ');
 }
 
@@ -251,6 +316,12 @@ function claimSentences(text: string): string {
  * Every price and area the narration states must come from the listings the
  * agent was given, or from the user's own words. A price counts as grounded
  * when some listing is within `tolerance` of it, because the agent rounds.
+ *
+ * Known gap: an area named as advice rather than as a claim ("Bahria Town is
+ * usually cheaper than Clifton") is still graded as ungrounded, because an
+ * offer marker is the only advisory phrasing `claimSentences` knows. Widening
+ * that to general advice needs the prompt to mark it, so it is left for a
+ * later pass rather than guessed at here.
  */
 export function checkGrounding({
   narration,
@@ -297,6 +368,19 @@ export function checkGrounding({
 export interface TurnExpectation {
   /** Filters each real search must include, in order. `[]` means the turn must not search. */
   searches?: SearchFilters[];
+  /**
+   * Treat `searches` as a floor rather than an exact count. A turn the prompt
+   * invites to search again — a zero-result one, which is told to suggest a
+   * relaxation — may legitimately run more; each extra is warned about so it
+   * still shows up in the report.
+   */
+  allowExtraSearches?: boolean;
+  /**
+   * Filter keys no search in this turn may carry. What a case leaves out of
+   * `searches` is only a minimum, so this is the one way to assert that the
+   * agent did *not* invent a constraint the user never gave.
+   */
+  forbidden?: (keyof SearchFilters)[];
   /** The narration must match. */
   narration?: RegExp;
   /** Skip the grounding check — a zero-result turn quotes probe figures, not listings. */
@@ -304,8 +388,24 @@ export interface TurnExpectation {
 }
 
 export interface Observed {
+  /** This turn's message, for the report. */
   userMessage: string;
+  /**
+   * Every user message in the case so far, newline-joined, including this
+   * turn's. Grounding allows what the *conversation* supplied, not only what
+   * the latest message did: a budget or an area named two turns ago is still
+   * the user's own word, and failing the agent for repeating it back would be
+   * grading it on the harness's forgetfulness.
+   */
+  allowedText: string;
   searches: SearchFilters[];
+  /**
+   * The listings the agent was *shown*, not every listing the search returned
+   * — `listingsForAgent` renders only the first `LISTINGS_SHOWN_TO_AGENT` of
+   * them. A price out of the ninth result is as invented, from where the
+   * agent sits, as one out of thin air, so the runner slices before it fills
+   * this in.
+   */
   listings: Listing[];
   narration: string;
   errors: string[];
@@ -327,9 +427,29 @@ export function evaluateTurn(
 
   for (const message of observed.errors) failures.push(`error event: ${message}`);
 
+  if (expect.forbidden) {
+    observed.searches.forEach((actual, i) => {
+      for (const key of expect.forbidden ?? []) {
+        const value = actual[key];
+        if (value !== undefined) failures.push(`search ${i + 1}: forbidden ${key}: ${String(value)}`);
+      }
+    });
+  }
+
   if (expect.searches) {
-    if (observed.searches.length !== expect.searches.length) {
-      failures.push(`expected ${expect.searches.length} search(es), got ${observed.searches.length}`);
+    const enough = expect.allowExtraSearches
+      ? observed.searches.length >= expect.searches.length
+      : observed.searches.length === expect.searches.length;
+    if (!enough) {
+      const how = expect.allowExtraSearches ? 'at least ' : '';
+      failures.push(`expected ${how}${expect.searches.length} search(es), got ${observed.searches.length}`);
+    }
+    // An allowed extra is still worth seeing: a second search the case didn't
+    // ask for is how a relaxation loop starts running away.
+    if (expect.allowExtraSearches) {
+      for (let i = expect.searches.length; i < observed.searches.length; i++) {
+        warnings.push(`search ${i + 1}: unexpected extra search`);
+      }
     }
     expect.searches.forEach((wanted, i) => {
       const actual = observed.searches[i];
@@ -342,7 +462,11 @@ export function evaluateTurn(
         // an extra area is that rule broken, not a helpful addition, so it
         // fails the turn instead of just being noted.
         if (m.startsWith('area:')) failures.push(`search ${i + 1}: unexpected ${m}`);
-        else warnings.push(`search ${i + 1}: extra ${m}`);
+        // A budget the user never gave is the same kind of invention: it
+        // silently hides listings the user asked to see.
+        else if (m.startsWith('minPrice:') || m.startsWith('maxPrice:')) {
+          failures.push(`search ${i + 1}: unexpected budget: ${m}`);
+        } else warnings.push(`search ${i + 1}: extra ${m}`);
       }
     });
   }
@@ -357,7 +481,7 @@ export function evaluateTurn(
       narration: observed.narration,
       listings: observed.listings,
       knownAreas,
-      allowedText: observed.userMessage,
+      allowedText: observed.allowedText,
     });
     for (const p of grounding.ungroundedPrices) failures.push(`price not in results: PKR ${p.toLocaleString('en-US')}`);
     for (const a of grounding.ungroundedAreas) failures.push(`area not in results: ${a}`);

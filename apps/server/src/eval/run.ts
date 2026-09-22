@@ -22,9 +22,21 @@ import { formatReport, parseArgs, resolveOutputPath, type CaseReport, type TurnR
 async function runCase(c: EvalCase, knownAreas: readonly string[]): Promise<CaseReport> {
   const sessionKey = await createSession(`eval-${c.name}-${Date.now()}`);
   const turns: TurnReport[] = [];
+  // What the user has said so far in this case. The agent may repeat a budget
+  // or an area from turn one in its reply to turn three, and that is the
+  // user's own word, not an invention — grounding is allowed all of it.
+  const history: string[] = [];
 
   for (const turn of c.turns) {
-    const observed: Observed = { userMessage: turn.user, searches: [], listings: [], narration: '', errors: [] };
+    history.push(turn.user);
+    const observed: Observed = {
+      userMessage: turn.user,
+      allowedText: history.join('\n'),
+      searches: [],
+      listings: [],
+      narration: '',
+      errors: [],
+    };
 
     // The loop calls searchListings for the real search *and* for the
     // relaxation probes after an empty one. Only a real search is followed
