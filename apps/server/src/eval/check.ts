@@ -168,6 +168,52 @@ function containsPhrase(hay: string, needle: string): boolean {
 }
 
 /**
+ * Plain Levenshtein distance: the fewest single-character insertions,
+ * deletions or substitutions that turn `a` into `b`.
+ */
+export function editDistance(a: string, b: string): number {
+  // A rolling pair of rows, not a full matrix: each cell only ever needs the
+  // row above and the cells already filled in this one, and a fallback of 0
+  // on a lookup is never actually reached — every index read here was
+  // written one step earlier by this same construction.
+  let prev: number[] = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const curr: number[] = [i];
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr.push(
+        Math.min(
+          (prev[j] ?? 0) + 1, // deletion
+          (curr[j - 1] ?? 0) + 1, // insertion
+          (prev[j - 1] ?? 0) + cost, // substitution
+        ),
+      );
+    }
+    prev = curr;
+  }
+  return prev[b.length] ?? 0;
+}
+
+/**
+ * Whether `a` and `b` are close enough to be the same area spelled two ways,
+ * not two different places. Both sides are normalised first so a separator
+ * or case difference is never counted as an edit. The 8-character floor
+ * keeps a short name like "Clifton" from fuzzing its way into an unrelated
+ * word just because a handful of edits is a large fraction of a short
+ * string. The digit check is deliberately separate from the character-ratio
+ * one: "PECHS Block 5" and "PECHS Block 6" are one edit apart and would
+ * clear 0.2 easily, so a mismatch in the digits alone disqualifies the pair
+ * outright — a neighbouring block number must never ground another.
+ */
+export function nearlySame(a: string, b: string): boolean {
+  const left = normaliseArea(a);
+  const right = normaliseArea(b);
+  if (left.length < 8 || right.length < 8) return false;
+  if (left.replace(/\D/g, '') !== right.replace(/\D/g, '')) return false;
+  return editDistance(left, right) / Math.max(left.length, right.length) <= 0.2;
+}
+
+/**
  * Known area names present in the text as whole phrases, longest first.
  * Separators are normalised on both sides before matching, and a name is
  * deduplicated by its normalised form — "Clifton - Block 9" and "Clifton
@@ -364,6 +410,16 @@ export function checkGrounding({
   // sub-area named only in the title (not broken out in the path) still
   // counts as something the model could have read, not invented.
   const titles = listings.map((l) => normaliseArea(l.title));
+  // The corpus misspells some sub-area names in the path itself ("Itthed" for
+  // Ittehad, "Shabaz" for Shahbaz) and the model, reasonably, writes the
+  // correct spelling — so a mention that fails the exact check still gets a
+  // second look against each path's own segments. Segments only, not the
+  // whole joined path: fuzzing the whole path would let a close-enough parent
+  // segment vouch for a sub-area it never actually names. And path only, not
+  // the title, which stays exact-match — a title is free text the agent can
+  // quote outright, and fuzzing it too would let an unrelated title word
+  // ground almost anything.
+  const pathSegments = listings.flatMap((l) => l.areaPath.split(' > ').map(normaliseArea));
   const allowedAreas = findAreaMentions(allowedText, knownAreas).map((a) => normaliseArea(a));
   // Whole-phrase, not a bare substring: a title's "Cliftonia Tower" must not
   // ground a claim about "Clifton" just because one word contains the other.
@@ -372,7 +428,8 @@ export function checkGrounding({
     return (
       !paths.some((p) => containsPhrase(p, needle)) &&
       !titles.some((t) => containsPhrase(t, needle)) &&
-      !allowedAreas.includes(needle)
+      !allowedAreas.includes(needle) &&
+      !pathSegments.some((seg) => nearlySame(seg, needle))
     );
   });
 

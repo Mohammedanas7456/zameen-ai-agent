@@ -4,9 +4,11 @@ import {
   checkGrounding,
   claimSentences,
   compareFilters,
+  editDistance,
   evaluateTurn,
   extractPrices,
   findAreaMentions,
+  nearlySame,
 } from './check.js';
 
 const LISTING = {
@@ -95,6 +97,22 @@ describe('extractPrices', () => {
     expect(extractPrices('at 3 thousand people')).toEqual([]);
     expect(extractPrices('at 5 thousand feet')).toEqual([]);
     expect(extractPrices('at 20 thousand')).toEqual([20_000]);
+  });
+});
+
+describe('editDistance', () => {
+  it('counts the fewest single-character edits between two strings', () => {
+    expect(editDistance('kitten', 'sitting')).toBe(3);
+  });
+});
+
+describe('nearlySame', () => {
+  it('treats the corpus misspelling and the model\'s correct spelling as the same area', () => {
+    expect(nearlySame('Itthed Commercial', 'Ittehad Commercial')).toBe(true);
+  });
+
+  it('refuses two names that differ only by their block number', () => {
+    expect(nearlySame('PECHS Block 5', 'PECHS Block 6')).toBe(false);
   });
 });
 
@@ -387,6 +405,50 @@ describe('checkGrounding', () => {
       allowedText: '',
     });
     expect(result.ungroundedAreas).toEqual([]);
+  });
+
+  it('grounds a mention the corpus itself misspells in the listing path, against the model\'s correct spelling', () => {
+    const result = checkGrounding({
+      narration: 'flats in Bukhari, Nishat, and Ittehad Commercial',
+      listings: [
+        listingAt(125_000, 'DHA Defence > DHA Phase 6 > Itthed Commercial'),
+        listingAt(140_000, 'DHA Defence > DHA Phase 6 > Bukhari Commercial Area'),
+        listingAt(160_000, 'DHA Defence > DHA Phase 6 > Nishat Commercial Area'),
+      ],
+      knownAreas: ['Ittehad Commercial', 'Bukhari Commercial Area', 'Nishat Commercial Area'],
+      allowedText: '',
+    });
+    expect(result.ungroundedAreas).toEqual([]);
+  });
+
+  it('never lets the fuzzy fallback ground one block number against its neighbour', () => {
+    const result = checkGrounding({
+      narration: 'one in PECHS Block 5',
+      listings: [listingAt(140_000, 'Jamshed Town > PECHS > PECHS Block 6')],
+      knownAreas: ['PECHS Block 5', 'PECHS Block 6'],
+      allowedText: '',
+    });
+    expect(result.ungroundedAreas).toEqual(['PECHS Block 5']);
+  });
+
+  it('gives a short name and a title no fuzz, even against a plausible-looking word', () => {
+    const result = checkGrounding({
+      narration: 'in Clifton',
+      listings: [{ ...listingAt(125_000, 'Karachi'), title: 'Cliftonia Tower' }],
+      knownAreas: ['Clifton'],
+      allowedText: '',
+    });
+    expect(result.ungroundedAreas).toEqual(['Clifton']);
+  });
+
+  it('keeps two genuinely different area names apart even though the fuzzy fallback exists', () => {
+    const result = checkGrounding({
+      narration: 'in Gulshan-e-Maymar',
+      listings: [listingAt(125_000, 'Gulshan-e-Iqbal Town > Gulshan-e-Iqbal')],
+      knownAreas: ['Gulshan-e-Maymar', 'Gulshan-e-Iqbal'],
+      allowedText: '',
+    });
+    expect(result.ungroundedAreas).toEqual(['Gulshan-e-Maymar']);
   });
 });
 
