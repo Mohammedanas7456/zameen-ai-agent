@@ -121,14 +121,18 @@ A buyer can book a viewing on any listing, checked live against the estate agent
 `npm run eval` replays ten scripted conversations against the live agent and grades each turn: did it search when it should (and only then), did every search carry the filters the message implied, did the intake ask the right question, and is every price and area in its reply actually in the listings it was shown. It runs the real chat loop in-process, so it grades exactly what the server does.
 
 ```bash
-npm run eval                          # all cases, ~5 minutes, one session each
+npm run eval                          # all cases, about 10 minutes, one session each
 npm run eval -- --case compare        # one case; repeat --case for several
 npm run eval -- --json eval.json      # keep the full transcript and verdicts
 ```
 
 A relative `--json` path is taken from the directory you ran npm in.
 
-A non-zero exit means at least one case failed; the report names the turn, the failure, the filters actually used and the start of the reply. Cases live in `apps/server/src/eval/cases.ts`; each states *why* it exists, and its expected filters are a minimum, so the agent adding a filter the user implied is a warning rather than a failure. Run it before and after any change to the prompt, the lambda, or the model.
+A non-zero exit means at least one case failed; the report names the turn, the failure, the filters actually used and the whole reply. A `!` instead of a tick or a cross means that case never finished — the run keeps going and the others are still graded. Cases live in `apps/server/src/eval/cases.ts`; each states *why* it exists, and its expected filters are a minimum, so the agent adding a filter the user implied is a warning rather than a failure. Run it before and after any change to the prompt, the lambda, or the model.
+
+A green run means every price and area the agent stated was in the eight listings it was shown and every search carried the expected filters. It does not prove each described listing exists as described, and it is one sample of a stochastic model — run it twice before trusting a red or a green.
+
+Each run leaves ten `eval-*` sessions on the agent, which expire after seven idle days like any other; the `turn_usage` lines interleaved with the report are the server's ordinary per-turn token log, not part of the grading.
 
 ## Limits and recovery
 
