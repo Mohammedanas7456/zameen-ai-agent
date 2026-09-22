@@ -55,6 +55,19 @@ describe('extractPrices', () => {
   it('deduplicates', () => {
     expect(extractPrices('1.5 lakh … again 1.5 lakh')).toEqual([150_000]);
   });
+
+  it('reads thousand as a unit', () => {
+    expect(extractPrices('33 rentals matched, from PKR 75 thousand to 1.6 lakh.')).toEqual([75_000, 160_000]);
+    expect(extractPrices('both 648 sq ft flats at PKR 20 thousand')).toEqual([20_000]);
+    expect(extractPrices('a 7th-floor 3-bed flat in Block F at PKR 95 thousand')).toEqual([95_000]);
+  });
+
+  it('classifies a unit-less range by the size word after its second number', () => {
+    expect(extractPrices('3-bed flats around 1,500–1,600 sq ft at PKR 75 thousand')).toEqual([75_000]);
+    expect(extractPrices('a brand-new 1,250-sq-ft flat at PKR 73 thousand')).toEqual([73_000]);
+    expect(extractPrices('1,250 square feet')).toEqual([]);
+    expect(extractPrices('from 75,000–1.65 lakh')).toEqual([75_000, 165_000]);
+  });
 });
 
 describe('findAreaMentions', () => {

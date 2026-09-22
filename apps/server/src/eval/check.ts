@@ -10,6 +10,8 @@ import type { Listing, SearchFilters } from '@zameen/shared';
 
 const UNIT_MULTIPLIER: Record<string, number> = {
   k: 1_000,
+  thousand: 1_000,
+  thousands: 1_000,
   lakh: 100_000,
   lakhs: 100_000,
   lac: 100_000,
@@ -18,10 +20,15 @@ const UNIT_MULTIPLIER: Record<string, number> = {
   cr: 10_000_000,
 };
 
-const UNIT = '(?:lakhs?|lac|crores?|cr|k)';
+const UNIT = '(?:lakhs?|lac|crores?|cr|k|thousands?)';
 
-/** A number is not a price when the next word says what it counts. */
-const NOT_A_PRICE = /^(?:sq|sqft|sq\.|bed|beds|bedroom|bedrooms|bath|baths|bathroom|bathrooms|floor|floors|listing|listings|match|matches|option|options|result|results|property|properties|flat|flats|house|houses|marla|kanal|yard|yards|km|min|mins|minute|minutes|hour|hours|day|days|%|of|more|further|search|searches)\b/i;
+/**
+ * A number is not a price when the next word says what it counts. A leading
+ * hyphen is allowed because a unit-less range's second number is stripped
+ * before this runs (see the classification note in `extractPrices`), leaving
+ * `-1,600 sq ft` behind for a moment on the way there.
+ */
+const NOT_A_PRICE = /^-?(?:sq|sqft|sq\.|sqm|square|bed|beds|bedroom|bedrooms|bath|baths|bathroom|bathrooms|floor|floors|storey|storeys|story|stories|listing|listings|match|matches|option|options|result|results|property|properties|flat|flats|house|houses|marla|kanal|yard|yards|unit|units|km|min|mins|minute|minutes|hour|hours|day|days|month|months|year|years|%|of|more|further|search|searches)\b/i;
 
 /** A price stated as a gap ("40k less") is not a price anything is listed at. */
 const DIFFERENCE = /\b(?:less|more|cheaper|dearer|higher|lower|apart|difference|extra|saving|savings|off)\b/i;
@@ -64,10 +71,18 @@ export function extractPrices(text: string): number[] {
     if (DIFFERENCE.test(nextWords)) continue;
 
     let value: number | null = null;
-    if (unit) value = toNumber(raw) * (UNIT_MULTIPLIER[unit.toLowerCase()] ?? 1);
-    else if (NOT_A_PRICE.test(after)) continue;
-    else if (currency) value = toNumber(raw);
-    else if (raw.includes(',') && toNumber(raw) >= 1000) value = toNumber(raw);
+    if (unit) {
+      value = toNumber(raw) * (UNIT_MULTIPLIER[unit.toLowerCase()] ?? 1);
+    } else {
+      // A number with neither unit nor currency, sat in front of "- <number>",
+      // is the low end of a range ("1,500-1,600 sq ft"): the word that says
+      // what it counts sits after the *second* number, not this one, so drop
+      // that number before asking NOT_A_PRICE what follows it.
+      const classify = currency ? after : after.replace(/^-\s*\d[\d,]*(?:\.\d+)?\s*/, '');
+      if (NOT_A_PRICE.test(classify)) continue;
+      else if (currency) value = toNumber(raw);
+      else if (raw.includes(',') && toNumber(raw) >= 1000) value = toNumber(raw);
+    }
 
     if (value !== null && Number.isFinite(value) && !found.includes(value)) found.push(value);
   }
