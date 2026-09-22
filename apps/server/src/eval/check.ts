@@ -105,11 +105,19 @@ function normaliseArea(s: string): string {
  * deduplicated by its normalised form — "Clifton - Block 9" and "Clifton
  * Block 9" are the same area under two spellings, so only the one found
  * first (the longer one, since it's tried first) is returned.
+ *
+ * The live facets include generic names like "Block 6" that also occur as
+ * the tail of a longer name ("PECHS Block 6"). Once a name claims a span of
+ * the text, a shorter name is not allowed to match inside that span — it
+ * would just be re-reporting the same mention under a vaguer name — so a
+ * candidate occurrence fully inside an already-claimed range is skipped in
+ * favour of another occurrence of that same name elsewhere in the text.
  */
 export function findAreaMentions(text: string, knownAreas: readonly string[]): string[] {
   const hay = normaliseArea(text);
   const found: string[] = [];
   const seen = new Set<string>();
+  const claimed: Array<[number, number]> = [];
   for (const name of [...knownAreas].sort((a, b) => b.length - a.length)) {
     const needle = normaliseArea(name);
     if (seen.has(needle)) continue;
@@ -117,11 +125,14 @@ export function findAreaMentions(text: string, knownAreas: readonly string[]): s
     while (from <= hay.length) {
       const at = hay.indexOf(needle, from);
       if (at === -1) break;
+      const end = at + needle.length;
       const before = at === 0 ? ' ' : hay[at - 1]!;
-      const afterChar = hay[at + needle.length] ?? ' ';
-      if (!/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(afterChar)) {
+      const afterChar = hay[end] ?? ' ';
+      const insideClaimedSpan = claimed.some(([start, stop]) => at >= start && end <= stop);
+      if (!insideClaimedSpan && !/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(afterChar)) {
         found.push(name);
         seen.add(needle);
+        claimed.push([at, end]);
         break;
       }
       from = at + 1;
@@ -179,6 +190,29 @@ export interface GroundingResult {
   ungroundedAreas: string[];
 }
 
+/** An offer of a next step, however it's phrased — its figures are options, not claims. */
+const OFFER =
+  /\b(?:want me to|shall i|should i|would you like|could (?:also )?(?:check|try|look)|happy to|i can (?:also )?(?:check|search|look)|let me know if)\b/i;
+
+/**
+ * The claims in `text`, with any question or offer of a next step removed.
+ * The agent always ends a reply by proposing what to try next ("Want me to
+ * also check nearby PECHS Block 6 …?") and that proposal's prices and areas
+ * are options being floated, not statements about the listings shown — so
+ * grounding must never see them. Split into sentences first: a stop mark
+ * ([.!?]) only ends a sentence when followed by whitespace or the end of the
+ * text, so a decimal price like "1.4 lakh" is never mistaken for one. Then
+ * drop any sentence that ends in "?", or that offers to do more even when
+ * phrased as a statement with no "?" at all.
+ */
+function claimSentences(text: string): string {
+  return text
+    .split(/(?<=[.!?])(?=\s|$)/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && !s.endsWith('?') && !OFFER.test(s))
+    .join(' ');
+}
+
 /**
  * Every price and area the narration states must come from the listings the
  * agent was given, or from the user's own words. A price counts as grounded
@@ -199,9 +233,10 @@ export function checkGrounding({
 }): GroundingResult {
   const near = (candidates: number[], price: number) =>
     candidates.some((c) => Math.abs(c - price) <= Math.max(c, price) * tolerance);
+  const claims = claimSentences(narration);
   const listingPrices = listings.map((l) => l.pricePkr);
   const allowedPrices = extractPrices(allowedText);
-  const ungroundedPrices = extractPrices(narration).filter(
+  const ungroundedPrices = extractPrices(claims).filter(
     (p) => !near(listingPrices, p) && !near(allowedPrices, p),
   );
 
@@ -211,7 +246,7 @@ export function checkGrounding({
   // counts as something the model could have read, not invented.
   const titles = listings.map((l) => normaliseArea(l.title));
   const allowedAreas = findAreaMentions(allowedText, knownAreas).map((a) => normaliseArea(a));
-  const ungroundedAreas = findAreaMentions(narration, knownAreas).filter((name) => {
+  const ungroundedAreas = findAreaMentions(claims, knownAreas).filter((name) => {
     const needle = normaliseArea(name);
     return !paths.some((p) => p.includes(needle)) && !titles.some((t) => t.includes(needle)) && !allowedAreas.includes(needle);
   });

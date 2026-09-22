@@ -90,6 +90,17 @@ describe('findAreaMentions', () => {
     const found = findAreaMentions('Clifton Block 9 has a verified 2-bed', ['Clifton', 'Clifton - Block 9', 'Clifton Block 9']);
     expect(found).toHaveLength(new Set(found).size);
   });
+
+  it('does not let a generic short name match inside a longer name it is part of', () => {
+    expect(findAreaMentions('nearby PECHS Block 6 today', ['Block 6', 'PECHS Block 6', 'PECHS'])).toEqual(['PECHS Block 6']);
+  });
+
+  it('still finds a short name elsewhere once the long match has claimed its own span', () => {
+    expect(findAreaMentions('PECHS Block 6 and also Block 5', ['Block 5', 'Block 6', 'PECHS Block 6'])).toEqual([
+      'PECHS Block 6',
+      'Block 5',
+    ]);
+  });
 });
 
 describe('compareFilters', () => {
@@ -193,6 +204,37 @@ describe('checkGrounding', () => {
       allowedText: '',
     });
     expect(result.ungroundedAreas).toEqual(['Clifton - Block 2']);
+  });
+
+  it('ignores the price and area in a trailing offer of a next step', () => {
+    const result = checkGrounding({
+      narration:
+        '1 match in PECHS at PKR 1.4 lakh in PECHS Block 2. Want me to also check nearby PECHS Block 6 or widen beyond ground floor?',
+      listings: [listingAt(140_000, 'Jamshed Town > PECHS > PECHS Block 2')],
+      knownAreas: ['PECHS', 'PECHS Block 2', 'PECHS Block 6'],
+      allowedText: '',
+    });
+    expect(result).toEqual({ ungroundedPrices: [], ungroundedAreas: [] });
+  });
+
+  it('still flags a claim made in a statement even when an offer follows it', () => {
+    const result = checkGrounding({
+      narration: 'There is a 3-bed in PECHS Block 6 at 1.4 lakh. Want me to widen?',
+      listings: [listingAt(140_000, 'Jamshed Town > PECHS > PECHS Block 2')],
+      knownAreas: ['PECHS', 'PECHS Block 2', 'PECHS Block 6'],
+      allowedText: '',
+    });
+    expect(result.ungroundedAreas).toEqual(['PECHS Block 6']);
+  });
+
+  it('exempts only the question price, not the statement price ahead of it', () => {
+    const result = checkGrounding({
+      narration: 'Nothing under 1 lakh. Want me to try under 1.5 lakh?',
+      listings: [listingAt(140_000)],
+      knownAreas: AREAS,
+      allowedText: '',
+    });
+    expect(result.ungroundedPrices).toEqual([100_000]);
   });
 });
 
