@@ -72,7 +72,21 @@ export function extractPrices(text: string): number[] {
 
     let value: number | null = null;
     if (unit) {
-      value = toNumber(raw) * (UNIT_MULTIPLIER[unit.toLowerCase()] ?? 1);
+      const lowerUnit = unit.toLowerCase();
+      const multiplier = UNIT_MULTIPLIER[lowerUnit] ?? 1;
+      if (lowerUnit !== 'thousand' && lowerUnit !== 'thousands') {
+        value = toNumber(raw) * multiplier;
+      } else {
+        // "thousand" is an ordinary English word ("3 thousand people"), not a
+        // price marker like "lakh"/"crore"/"k", so it doesn't get a free pass
+        // from the size-word veto: run it through the same classify-and-veto
+        // (and, absent a currency, the same comma requirement) a bare number
+        // would get, then apply the unit's multiplier if it survives.
+        const classify = currency ? after : after.replace(/^-\s*\d[\d,]*(?:\.\d+)?\s*/, '');
+        if (NOT_A_PRICE.test(classify)) continue;
+        else if (currency) value = toNumber(raw) * multiplier;
+        else if (raw.includes(',') && toNumber(raw) >= 1000) value = toNumber(raw) * multiplier;
+      }
     } else {
       // A number with neither unit nor currency, sat in front of "- <number>",
       // is the low end of a range ("1,500-1,600 sq ft"): the word that says
@@ -97,6 +111,28 @@ export function extractPrices(text: string): number[] {
  */
 function normaliseArea(s: string): string {
   return s.toLowerCase().replace(/[\s\-–—]+/g, ' ').trim();
+}
+
+/** A character that isn't a letter or digit — or off the end of the string — breaks a phrase match. */
+function isWordBreak(ch: string | undefined): boolean {
+  return ch === undefined || !/[a-z0-9]/.test(ch);
+}
+
+/**
+ * Whether `needle` occurs in `hay` as a whole phrase, not merely as a
+ * substring of a longer word ("Clifton" inside "Cliftonia" doesn't count).
+ * Both arguments must already be normalised (see `normaliseArea`).
+ */
+function containsPhrase(hay: string, needle: string): boolean {
+  let from = 0;
+  while (from <= hay.length) {
+    const at = hay.indexOf(needle, from);
+    if (at === -1) return false;
+    const end = at + needle.length;
+    if (isWordBreak(hay[at - 1]) && isWordBreak(hay[end])) return true;
+    from = at + 1;
+  }
+  return false;
 }
 
 /**
@@ -126,10 +162,8 @@ export function findAreaMentions(text: string, knownAreas: readonly string[]): s
       const at = hay.indexOf(needle, from);
       if (at === -1) break;
       const end = at + needle.length;
-      const before = at === 0 ? ' ' : hay[at - 1]!;
-      const afterChar = hay[end] ?? ' ';
       const insideClaimedSpan = claimed.some(([start, stop]) => at >= start && end <= stop);
-      if (!insideClaimedSpan && !/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(afterChar)) {
+      if (!insideClaimedSpan && isWordBreak(hay[at - 1]) && isWordBreak(hay[end])) {
         found.push(name);
         seen.add(needle);
         claimed.push([at, end]);
@@ -246,9 +280,15 @@ export function checkGrounding({
   // counts as something the model could have read, not invented.
   const titles = listings.map((l) => normaliseArea(l.title));
   const allowedAreas = findAreaMentions(allowedText, knownAreas).map((a) => normaliseArea(a));
+  // Whole-phrase, not a bare substring: a title's "Cliftonia Tower" must not
+  // ground a claim about "Clifton" just because one word contains the other.
   const ungroundedAreas = findAreaMentions(claims, knownAreas).filter((name) => {
     const needle = normaliseArea(name);
-    return !paths.some((p) => p.includes(needle)) && !titles.some((t) => t.includes(needle)) && !allowedAreas.includes(needle);
+    return (
+      !paths.some((p) => containsPhrase(p, needle)) &&
+      !titles.some((t) => containsPhrase(t, needle)) &&
+      !allowedAreas.includes(needle)
+    );
   });
 
   return { ungroundedPrices, ungroundedAreas };

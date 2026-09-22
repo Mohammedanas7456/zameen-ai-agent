@@ -68,6 +68,13 @@ describe('extractPrices', () => {
     expect(extractPrices('1,250 square feet')).toEqual([]);
     expect(extractPrices('from 75,000–1.65 lakh')).toEqual([75_000, 165_000]);
   });
+
+  it('still vetoes a size or count word after a thousand-scale number', () => {
+    expect(extractPrices('a 2 thousand sq ft house at PKR 3 lakh')).toEqual([300_000]);
+    expect(extractPrices('around 3 thousand people')).toEqual([]);
+    expect(extractPrices('PKR 75 thousand')).toEqual([75_000]);
+    expect(extractPrices('from PKR 75 thousand to 1.6 lakh')).toEqual([75_000, 160_000]);
+  });
 });
 
 describe('findAreaMentions', () => {
@@ -235,6 +242,26 @@ describe('checkGrounding', () => {
       allowedText: '',
     });
     expect(result.ungroundedPrices).toEqual([100_000]);
+  });
+
+  it('does not let a title ground an area that is merely a substring of one of its words', () => {
+    const result = checkGrounding({
+      narration: 'in Clifton',
+      listings: [{ ...listingAt(125_000, 'Karachi'), title: 'Cliftonia Tower' }],
+      knownAreas: ['Clifton'],
+      allowedText: '',
+    });
+    expect(result.ungroundedAreas).toEqual(['Clifton']);
+  });
+
+  it('grounds an area the title names as a whole phrase', () => {
+    const result = checkGrounding({
+      narration: 'in Clifton',
+      listings: [{ ...listingAt(125_000, 'Karachi'), title: '2 Bed Flat For Rent In Clifton Block 9' }],
+      knownAreas: ['Clifton'],
+      allowedText: '',
+    });
+    expect(result.ungroundedAreas).toEqual([]);
   });
 });
 
