@@ -203,14 +203,16 @@ export function editDistance(a: string, b: string): number {
  * string. The digit check is deliberately separate from the character-ratio
  * one: "PECHS Block 5" and "PECHS Block 6" are one edit apart and would
  * clear 0.2 easily, so a mismatch in the digits alone disqualifies the pair
- * outright — a neighbouring block number must never ground another.
+ * outright — a neighbouring block number must never ground another. Two real
+ * areas, Gulshan-e-Iqbal and Gulshan-e-Jamal, differ by three edits in
+ * fifteen characters, landing exactly on 0.2, so the threshold is strictly less.
  */
 export function nearlySame(a: string, b: string): boolean {
   const left = normaliseArea(a);
   const right = normaliseArea(b);
   if (left.length < 8 || right.length < 8) return false;
   if (left.replace(/\D/g, '') !== right.replace(/\D/g, '')) return false;
-  return editDistance(left, right) / Math.max(left.length, right.length) <= 0.2;
+  return editDistance(left, right) / Math.max(left.length, right.length) < 0.2;
 }
 
 /**

@@ -114,6 +114,10 @@ describe('nearlySame', () => {
   it('refuses two names that differ only by their block number', () => {
     expect(nearlySame('PECHS Block 5', 'PECHS Block 6')).toBe(false);
   });
+
+  it('keeps two real areas apart at the fuzzy boundary', () => {
+    expect(nearlySame('Gulshan-e-Iqbal', 'Gulshan-e-Jamal')).toBe(false);
+  });
 });
 
 describe('findAreaMentions', () => {
@@ -449,6 +453,16 @@ describe('checkGrounding', () => {
       allowedText: '',
     });
     expect(result.ungroundedAreas).toEqual(['Gulshan-e-Maymar']);
+  });
+
+  it('rejects fuzzy match for two real areas at the fuzzy boundary', () => {
+    const result = checkGrounding({
+      narration: 'a flat in Gulshan-e-Jamal',
+      listings: [listingAt(125_000, 'Gulshan-e-Iqbal Town > Gulshan-e-Iqbal')],
+      knownAreas: ['Gulshan-e-Jamal', 'Gulshan-e-Iqbal'],
+      allowedText: '',
+    });
+    expect(result.ungroundedAreas).toEqual(['Gulshan-e-Jamal']);
   });
 });
 
