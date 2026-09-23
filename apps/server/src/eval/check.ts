@@ -15,20 +15,22 @@ const UNIT_MULTIPLIER: Record<string, number> = {
   lakh: 100_000,
   lakhs: 100_000,
   lac: 100_000,
+  l: 100_000,
   crore: 10_000_000,
   crores: 10_000_000,
   cr: 10_000_000,
 };
 
-const UNIT = '(?:lakhs?|lac|crores?|cr|k|thousands?)';
+const UNIT = '(?:lakhs?|lac|l|crores?|cr|k|thousands?)';
 
 /**
  * A number is not a price when the next word says what it counts. A leading
  * hyphen is allowed because a unit-less range's second number is stripped
  * before this runs (see the classification note in `extractPrices`), leaving
- * `-1,600 sq ft` behind for a moment on the way there.
+ * `-1,600 sq ft` behind for a moment on the way there. A "+" suffix such as
+ * in "2,000+ sqft" is also skipped.
  */
-const NOT_A_PRICE = /^-?(?:sq|sqft|sq\.|sqm|square|feet|ft|bed|beds|bedroom|bedrooms|bath|baths|bathroom|bathrooms|floor|floors|storey|storeys|story|stories|listing|listings|match|matches|option|options|result|results|property|properties|flat|flats|house|houses|marla|kanal|acres|yard|yards|unit|units|km|min|mins|minute|minutes|hour|hours|day|days|month|months|year|years|people|persons|residents|families|%|of|more|further|search|searches)\b/i;
+const NOT_A_PRICE = /^[-+]?\s*(?:sq|sqft|sq\.|sqm|square|feet|ft|bed|beds|bedroom|bedrooms|bath|baths|bathroom|bathrooms|floor|floors|storey|storeys|story|stories|listing|listings|match|matches|option|options|result|results|property|properties|flat|flats|house|houses|marla|kanal|acres|yard|yards|unit|units|km|min|mins|minute|minutes|hour|hours|day|days|month|months|year|years|people|persons|residents|families|%|of|more|further|search|searches)\b/i;
 
 /** A price stated as a gap ("40k less") is not a price anything is listed at. */
 const DIFFERENCE = /\b(?:less|more|cheaper|dearer|higher|lower|apart|difference|extra|saving|savings|off)\b/i;

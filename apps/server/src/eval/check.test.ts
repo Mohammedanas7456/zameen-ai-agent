@@ -103,6 +103,15 @@ describe('extractPrices', () => {
     expect(extractPrices('at 5 thousand feet')).toEqual([]);
     expect(extractPrices('at 20 thousand')).toEqual([20_000]);
   });
+
+  it('reads a bare L as lakh, including across a range', () => {
+    expect(extractPrices('roughly PKR 1–1.7L in Ittehad Commercial')).toEqual([100000, 170000]);
+    expect(extractPrices('slightly mehngay (≈2.25–2.5L)')).toEqual([225000, 250000]);
+  });
+
+  it('ignores a size written with a trailing plus', () => {
+    expect(extractPrices('Larger portions (2,000+ sqft) sit around PKR 1.2–1.6 Lakh')).toEqual([120000, 160000]);
+  });
 });
 
 describe('editDistance', () => {
