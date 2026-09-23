@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   agentName,
   agentsReferencingTool,
+  agentsWithoutToolInfo,
   modelBlock,
   parseSetupArgs,
   PRODUCTION_AGENT_KEY,
@@ -88,8 +89,8 @@ describe('agentsReferencingTool', () => {
   // literal array would produce (and that union then fails that check).
   const agents: AgentToolRefs[] = [
     { key: 'zameen_property_assistant', tool_configurations: { search_properties: { tool_id: 'tol_1' } } },
-    { key: 'zameen_eval_gpt54', tool_configurations: { search_properties: { tool_id: 'tol_1' } } },
     { key: 'zameen_eval_gpt5mini', tool_configurations: { search_properties: { tool_id: 'tol_1' } } },
+    { key: 'zameen_eval_gpt54', tool_configurations: { search_properties: { tool_id: 'tol_1' } } },
     { key: 'other_agent', tool_configurations: { web: { tool_id: null }, docs: { tool_id: 'tol_9' } } },
     { key: 'bare_agent' },
   ];
@@ -104,5 +105,10 @@ describe('agentsReferencingTool', () => {
   it('is empty when only the agent itself references the tool', () => {
     expect(agentsReferencingTool(agents, 'tol_9', 'other_agent')).toEqual([]);
     expect(agentsReferencingTool(agents, 'tol_missing', 'zameen_property_assistant')).toEqual([]);
+  });
+
+  it('reports agents whose listing carried no tool information at all', () => {
+    expect(agentsWithoutToolInfo(agents, 'zameen_property_assistant')).toEqual(['bare_agent']);
+    expect(agentsWithoutToolInfo(agents, 'bare_agent')).toEqual([]);
   });
 });

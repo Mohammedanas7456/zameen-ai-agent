@@ -60,7 +60,7 @@ budget should I keep in mind?") instead of searching, though area and purpose
 were both known. Its two one-line replies also came through the token stream
 twice, a quirk not seen in any other model. Its third failure is the grader
 false positive above; the comparison reply itself was correct and the most
-heavily formatted of the study (19 bold spans per reply). It was the fastest
+heavily formatted of the study (about 10 bold spans per reply). It was the fastest
 run and used the fewest input tokens, but it does not follow the
 instructions the product depends on.
 
@@ -82,7 +82,7 @@ reasoning alone would have exhausted several turns.
 - **Reasoning effort: `low` is worth trying in production.** It was faster and
   cheaper with no measured loss. It changes how much the model thinks before
   every reply, so it is presented here as a decision rather than applied:
-  `npm run setup:agent -- --max-tokens 4000 --reasoning-effort low --keep-tool`
+  `npm run setup:agent -- --agent-key zameen_property_assistant --max-tokens 4000 --reasoning-effort low --keep-tool`
   turns it on, and the same command without `--reasoning-effort` turns it off.
 
 ## Applying the cap to production
@@ -90,13 +90,17 @@ reasoning alone would have exhausted several turns.
 Production still runs `max_tokens: 1500`. To apply the recommendation:
 
 ```bash
-npm run setup:agent -- --max-tokens 4000 --keep-tool
+npm run setup:agent -- --agent-key zameen_property_assistant --max-tokens 4000 --keep-tool
 ```
 
 This sets production's model block to
 `{"name":"gpt-5.5","parameters":{"max_tokens":4000}}` and reuses the tool
 rather than replacing it, so open sessions and the candidate agents are
-unaffected. Revert with `--max-tokens 1500 --keep-tool`.
+unaffected. The key is named explicitly because the script otherwise takes it
+from `VECTARA_AGENT_KEY`, which an eval run may have left pointing at a
+candidate. Note that the command re-PUTs the whole agent definition,
+instructions re-rendered from the repo, not only the model block. Revert with
+the same command and `--max-tokens 1500`.
 
 ## Platform facts learned
 

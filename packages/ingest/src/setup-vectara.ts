@@ -20,6 +20,7 @@ import { toDocument, FILTER_ATTRIBUTES } from './document.js';
 import {
   agentName,
   agentsReferencingTool,
+  agentsWithoutToolInfo,
   modelBlock,
   parseSetupArgs,
   type AgentToolRefs,
@@ -309,6 +310,13 @@ async function ensureSearchTool(client: VectaraClient, listings: Listing[], face
   // production without a tool. Check before touching anything.
   if (existing.length > 0) {
     const agents = await listAgents(client);
+    const unknown = agentsWithoutToolInfo(agents, AGENT_KEY);
+    if (unknown.length > 0) {
+      throw new Error(
+        `cannot tell whether ${unknown.join(', ')} still use the search tool (the agent listing ` +
+          'carried no tool configurations for them) — re-run with --keep-tool to reuse it unchanged',
+      );
+    }
     for (const tool of existing) {
       const others = agentsReferencingTool(agents, tool.id, AGENT_KEY);
       if (others.length > 0) {
