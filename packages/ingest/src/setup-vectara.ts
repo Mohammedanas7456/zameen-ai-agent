@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import type { Facets, Listing } from '@zameen/shared';
 import { clientFromEnv, VectaraError, type VectaraClient } from './vectara.js';
 import { toDocument, FILTER_ATTRIBUTES } from './document.js';
+import { modelBlock, parseSetupArgs, type SetupOptions } from './setup-args.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -25,8 +26,18 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 loadEnv({ path: join(ROOT, '.env') });
 
 const CORPUS_KEY = process.env['VECTARA_CORPUS_KEY'] ?? 'zameen-karachi-properties';
-const AGENT_KEY = process.env['VECTARA_AGENT_KEY'] ?? 'zameen_property_assistant';
-const AGENT_MODEL = process.env['VECTARA_AGENT_MODEL'] ?? 'gpt-5.5';
+
+// Parsed at load because agentConfig and ensureSearchTool read it; a bad flag
+// must still die with its message rather than a stack trace from an import.
+const OPTIONS: SetupOptions = (() => {
+  try {
+    return parseSetupArgs(process.argv.slice(2), process.env);
+  } catch (err) {
+    console.error((err as Error).message);
+    process.exit(1);
+  }
+})();
+const AGENT_KEY = OPTIONS.agentKey;
 const SEARCH_TOOL_NAME = 'search_properties';
 
 async function readJson<T>(name: string): Promise<T> {
@@ -185,7 +196,7 @@ async function agentConfig(
     key: AGENT_KEY,
     name: 'Zameen Property Assistant',
     description: 'Conversational property search over Zameen.com Karachi listings.',
-    model: { name: AGENT_MODEL, parameters: { max_tokens: 1500 } },
+    model: modelBlock(OPTIONS),
     first_step_name: 'main',
     steps: {
       main: {
@@ -246,6 +257,19 @@ async function putAgent(client: VectaraClient, config: Record<string, unknown>):
  * asynchronous, hence the wait before recreating under the same name.
  */
 async function ensureSearchTool(client: VectaraClient, listings: Listing[], facets: Facets): Promise<string> {
+  if (OPTIONS.keepTool) {
+    // A candidate agent shares the production tool. Replacing it here would
+    // detach the production agent for the length of the swap.
+    console.log(`\n[3/4] Tool "${SEARCH_TOOL_NAME}" (reused)`);
+    const existing = await findSearchTools(client);
+    const only = existing[0];
+    if (existing.length !== 1 || !only) {
+      throw new Error(`expected exactly one "${SEARCH_TOOL_NAME}" tool to reuse, found ${existing.length}`);
+    }
+    console.log(`      ${only.id}`);
+    return only.id;
+  }
+
   console.log(`\n[3/4] Tool "${SEARCH_TOOL_NAME}"`);
 
   const existing = await findSearchTools(client);
@@ -308,9 +332,7 @@ async function ensureAgent(
 async function main() {
   // Re-indexing 400 documents is slow and usually unnecessary when only the
   // prompt changed, so allow the steps to be run independently.
-  const args = new Set(process.argv.slice(2));
-  const agentOnly = args.has('--agent-only');
-  const skipIndex = agentOnly || args.has('--skip-index');
+  const { agentOnly, skipIndex } = OPTIONS;
 
   const client = clientFromEnv();
   const listings = await readJson<Listing[]>('listings.json');
@@ -322,7 +344,7 @@ async function main() {
   const searchToolId = await ensureSearchTool(client, listings, facets);
   await ensureAgent(client, listings, facets, searchToolId);
 
-  console.log(`\nDone.\n  corpus: ${CORPUS_KEY}\n  agent:  ${AGENT_KEY}`);
+  console.log(`\nDone.\n  corpus: ${CORPUS_KEY}\n  agent:  ${AGENT_KEY}\n  model:  ${JSON.stringify(modelBlock(OPTIONS))}`);
 }
 
 main().catch((err) => {
