@@ -134,6 +134,19 @@ A green run means every price and area the agent stated was in the eight listing
 
 Each run leaves ten `eval-*` sessions on the agent, which expire after seven idle days like any other; the `turn_usage` lines interleaved with the report are the server's ordinary per-turn token log, not part of the grading.
 
+## Comparing models
+
+A model trial never touches production. Provision a *candidate* agent under its own key, reusing the production search tool, then point the eval at it:
+
+```bash
+npm run setup:agent -- --agent-key zameen_eval_gpt5mini --model gpt-5-mini --max-tokens 4000 --keep-tool
+VECTARA_AGENT_KEY=zameen_eval_gpt5mini npm run eval -- --json eval-gpt5mini.json
+```
+
+`--reasoning-effort none|minimal|low|medium|high` sets the Responses API's reasoning effort; `--max-tokens` is the output cap, which on that API includes reasoning tokens (production runs 1500). The eval's report ends with a totals line — turns, seconds, input tokens (and how many were cached), output tokens (and how many were reasoning) — and the JSON records `agentKey`, so runs are comparable. Run each candidate at least twice; one run of a stochastic model is one sample.
+
+`GET /v2/llms` on your Vectara account lists the models you can name. To trial Claude, register it once as a customer LLM (`POST /v2/llms` with `type: "anthropic"`, a name, the model id, and your Anthropic key), then pass that name as `--model`. The measured comparison for this repo lives in `docs/eval/`.
+
 ## Limits and recovery
 
 - **One turn at a time per chat.** A second message while a reply is streaming gets `409`. The UI only sends one message at a time, but a reload during a reply re-adopts the same chat, so typing immediately after that can hit it.
