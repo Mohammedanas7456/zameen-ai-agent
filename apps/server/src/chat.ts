@@ -62,6 +62,11 @@ interface TurnMode {
   forwardAfterToolCall: boolean;
 }
 
+/** The only tool `TurnMode`, the search budget, and `CallState` bookkeeping
+ *  apply to. Any other tool (e.g. `web_search`) is a hosted tool that answers
+ *  within the same turn, so it bypasses all of that — see `tool_input` below. */
+const SEARCH_TOOL_NAME = 'search_properties';
+
 const SEARCH_TURN: TurnMode = { honourSearch: true, forwardAfterToolCall: false };
 /** The last results turn: a further call is ignored, and a text-only turn follows. */
 const LAST_RESULTS_TURN: TurnMode = { honourSearch: false, forwardAfterToolCall: false };
@@ -150,7 +155,7 @@ async function runTurn(
   const calls = new Map<string, CallState>();
   let anonymousCalls = 0;
   let lastCallId: string | null = null;
-  let toolName = 'search_properties';
+  let toolName = SEARCH_TOOL_NAME;
   let ignoredSearch = false;
   let streamedProse = false;
   let forwardProse = true;
@@ -195,6 +200,25 @@ async function runTurn(
           case 'tool_input': {
             const input = event['tool_input'];
             if (!input || typeof input !== 'object') break;
+            const calledTool = String(event['tool_configuration_name'] ?? toolName);
+
+            if (calledTool !== SEARCH_TOOL_NAME) {
+              // A hosted tool (e.g. `web_search`) runs and answers within
+              // this same turn, unlike the search_properties lambda, which
+              // only validates criteria and waits for a results turn. So it
+              // never touches the search budget or CallState bookkeeping
+              // below, and prose keeps streaming — only the activity chip
+              // reflects that a tool is running.
+              const query = (input as Record<string, unknown>)['query'];
+              emit({
+                type: 'tool_start',
+                tool: calledTool,
+                query: typeof query === 'string' ? query : '',
+                filter: '',
+              });
+              break;
+            }
+
             forwardProse = mode.forwardAfterToolCall;
             if (!mode.honourSearch) {
               ignoredSearch = true;
@@ -203,7 +227,7 @@ async function runTurn(
             const rawId = event['tool_call_id'];
             const id = typeof rawId === 'string' && rawId ? rawId : `#${anonymousCalls++}`;
             lastCallId = id;
-            toolName = String(event['tool_configuration_name'] ?? toolName);
+            toolName = calledTool;
             // A repeat id — the model relaxing its own filter mid-turn — replaces
             // this call's criteria; `started` carries over so a call whose chip
             // already went out never gets a second one for the update.

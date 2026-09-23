@@ -46,6 +46,7 @@ const OPTIONS: SetupOptions = (() => {
 })();
 const AGENT_KEY = OPTIONS.agentKey;
 const SEARCH_TOOL_NAME = 'search_properties';
+const WEB_SEARCH_TOOL_NAME = 'web_search';
 
 async function readJson<T>(name: string): Promise<T> {
   const file = join(ROOT, 'data', name);
@@ -246,9 +247,14 @@ async function agentConfig(
         output_parser: { type: 'default' },
       },
     },
-    tool_configurations: searchToolId
-      ? { [SEARCH_TOOL_NAME]: { type: 'lambda', tool_id: searchToolId } }
-      : {},
+    tool_configurations: {
+      ...(searchToolId ? { [SEARCH_TOOL_NAME]: { type: 'lambda', tool_id: searchToolId } } : {}),
+      // Built into Vectara's catalog — unlike the lambda above, it needs no
+      // separate tool resource and runs (and answers) entirely on their side.
+      // Per-call parameters (limit, query, domains) are locked in via
+      // `argument_override`, not set directly on the tool configuration.
+      [WEB_SEARCH_TOOL_NAME]: { type: 'web_search', argument_override: { limit: 5 } },
+    },
   };
 }
 

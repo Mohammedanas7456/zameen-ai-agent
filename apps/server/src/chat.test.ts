@@ -24,6 +24,16 @@ const toolInput = (tool_input: object, id = 'call-1') => ({
   tool_input,
 });
 
+/** A hosted tool call, e.g. `web_search` — unlike `search_properties`, it
+ *  answers within the same turn rather than waiting for a results turn. */
+const webSearchInput = (tool_input: object, id = 'call-1') => ({
+  type: 'tool_input',
+  tool_call_id: id,
+  tool_configuration_name: 'web_search',
+  tool_name: 'web_search',
+  tool_input,
+});
+
 const toolOutput = (tool_output: object, error = false, id = 'call-1') => ({
   type: 'tool_output',
   tool_call_id: id,
@@ -194,6 +204,34 @@ describe('handleUserMessage', () => {
     // the rejected property_type never reaches the filter.
     expect(start.filter).not.toContain('property_type');
     expect(events.some((e) => e.type === 'listings')).toBe(true);
+  });
+
+  it('streams prose through a web_search call instead of treating it as a property search', async () => {
+    const h = harness([
+      [
+        webSearchInput({ query: 'Bahria Town Karachi legal status' }),
+        prose('Bahria Town is '),
+        prose('generally considered legally sound, but verify the individual plot.'),
+      ],
+    ]);
+    await h.run('Is Bahria Town legally safe to buy in?');
+
+    // Unlike search_properties, a hosted tool answers within this same turn:
+    // no second turn, no search, no listings event.
+    expect(h.streamAgentTurn).toHaveBeenCalledTimes(1);
+    expect(h.searchListings).not.toHaveBeenCalled();
+    expect(h.events.some((e) => e.type === 'listings')).toBe(false);
+    expect(tokens(h.events)).toBe(
+      'Bahria Town is generally considered legally sound, but verify the individual plot.',
+    );
+
+    const start = h.events.find((e) => e.type === 'tool_start') as { tool: string; query: string; filter: string };
+    expect(start).toEqual({
+      type: 'tool_start',
+      tool: 'web_search',
+      query: 'Bahria Town Karachi legal status',
+      filter: '',
+    });
   });
 
   it('falls back to the raw arguments when the lambda itself failed', async () => {
