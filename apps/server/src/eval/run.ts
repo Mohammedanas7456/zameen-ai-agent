@@ -13,12 +13,22 @@
 import { writeFile } from 'node:fs/promises';
 import type { Listing, SearchFilters } from '@zameen/shared';
 import { handleUserMessage } from '../chat.js';
+import { config } from '../config.js';
 import { LISTINGS_SHOWN_TO_AGENT } from '../criteria.js';
 import { getFacets } from '../facets.js';
 import { createSession, searchListings } from '../vectara.js';
 import { CASES, type EvalCase } from './cases.js';
 import { evaluateTurn, type Observed } from './check.js';
-import { formatReport, parseArgs, resolveOutputPath, type CaseReport, type TurnReport } from './report.js';
+import {
+  addUsage,
+  emptyUsage,
+  formatReport,
+  parseArgs,
+  resolveOutputPath,
+  summarise,
+  type CaseReport,
+  type TurnReport,
+} from './report.js';
 
 /**
  * `turns` is filled in as the case runs rather than returned at the end, so a
@@ -31,6 +41,9 @@ async function runCase(c: EvalCase, knownAreas: readonly string[], turns: TurnRe
   // or an area from turn one in its reply to turn three, and that is the
   // user's own word, not an invention — grounding is allowed all of it.
   const history: string[] = [];
+
+  const usage = emptyUsage();
+  const startedAt = Date.now();
 
   for (const turn of c.turns) {
     history.push(turn.user);
@@ -69,13 +82,26 @@ async function runCase(c: EvalCase, knownAreas: readonly string[], turns: TurnRe
           pending = filters;
           return searchListings(filters, query, limit);
         },
+        // The server's per-turn token line is the cost of the run; keep it
+        // out of the console and in the report. Anything else it logs
+        // (an interrupt failure, say) still belongs on the console.
+        log: (entry) => {
+          if (!addUsage(usage, entry)) console.log(JSON.stringify(entry));
+        },
       },
     );
 
     turns.push({ user: turn.user, observed, verdict: evaluateTurn(turn.expect, observed, knownAreas) });
   }
 
-  return { name: c.name, why: c.why, passed: turns.every((t) => t.verdict.failures.length === 0), turns };
+  return {
+    name: c.name,
+    why: c.why,
+    passed: turns.every((t) => t.verdict.failures.length === 0),
+    turns,
+    usage,
+    durationMs: Date.now() - startedAt,
+  };
 }
 
 async function main(): Promise<void> {
@@ -89,6 +115,9 @@ async function main(): Promise<void> {
   // so a mention of an area the pipeline added yesterday still counts.
   const knownAreas = (await getFacets()).areas.map((a) => a.name);
 
+  const startedAt = new Date();
+  console.log(`agent: ${config.agentKey} — ${selected.length} case(s)`);
+
   const reports: CaseReport[] = [];
   try {
     for (const c of selected) {
@@ -100,7 +129,15 @@ async function main(): Promise<void> {
         // A run costs ten sessions and several minutes of model time. One
         // case dying — an expired session, an upstream 500 — must not throw
         // away the nine that would have told us something.
-        reports.push({ name: c.name, why: c.why, passed: false, errored: (err as Error).message, turns });
+        reports.push({
+          name: c.name,
+          why: c.why,
+          passed: false,
+          errored: (err as Error).message,
+          turns,
+          usage: emptyUsage(),
+          durationMs: 0,
+        });
       }
     }
 
@@ -111,7 +148,8 @@ async function main(): Promise<void> {
       // person actually typed the command, which is what a relative path here
       // should be read against.
       const jsonPath = resolveOutputPath(options.json, process.env['INIT_CWD'], process.cwd());
-      await writeFile(jsonPath, `${JSON.stringify(reports, null, 2)}\n`);
+      const run = summarise(config.agentKey, startedAt.toISOString(), Date.now() - startedAt.getTime(), reports);
+      await writeFile(jsonPath, `${JSON.stringify(run, null, 2)}\n`);
       console.log(`full report written to ${jsonPath}`);
     }
   }

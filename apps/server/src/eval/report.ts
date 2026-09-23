@@ -56,6 +56,93 @@ export interface CaseReport {
    */
   errored?: string;
   turns: TurnReport[];
+  /** Tokens the case spent, summed over its turns, and how long it took. */
+  usage: Usage;
+  durationMs: number;
+}
+
+/** Token and turn counts, summed from the server's `turn_usage` log lines. */
+export interface Usage {
+  turns: number;
+  inputTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}
+
+export function emptyUsage(): Usage {
+  return { turns: 0, inputTokens: 0, cachedTokens: 0, outputTokens: 0, reasoningTokens: 0 };
+}
+
+/**
+ * Vectara reports a token field either as a number or as `{ count, … }`.
+ * A bare number is the count and nothing else — it carries no cached or
+ * reasoning breakdown, so those sub-keys read as zero.
+ */
+function count(value: unknown, key = 'count'): number {
+  if (typeof value === 'number') return key === 'count' ? value : 0;
+  if (value && typeof value === 'object') {
+    const n = (value as Record<string, unknown>)[key];
+    return typeof n === 'number' ? n : 0;
+  }
+  return 0;
+}
+
+/**
+ * Fold one server log entry into `into`. Only `turn_usage` entries carry
+ * tokens; anything else is left for the console. Returns whether it counted.
+ */
+export function addUsage(into: Usage, entry: Record<string, unknown>): boolean {
+  if (entry['event'] !== 'turn_usage') return false;
+  const usage = entry['usage'];
+  if (!usage || typeof usage !== 'object') return false;
+  const u = usage as Record<string, unknown>;
+  into.turns += 1;
+  into.inputTokens += count(u['input_tokens']);
+  into.cachedTokens += count(u['input_tokens'], 'cached_tokens');
+  into.outputTokens += count(u['output_tokens']);
+  into.reasoningTokens += count(u['output_tokens'], 'reasoning_tokens');
+  return true;
+}
+
+/** Everything one `npm run eval` produced, written as the JSON report. */
+export interface RunReport {
+  /** The agent the run talked to — the point of a model comparison. */
+  agentKey: string;
+  startedAt: string;
+  durationMs: number;
+  passed: number;
+  total: number;
+  usage: Usage;
+  cases: CaseReport[];
+}
+
+export function summarise(agentKey: string, startedAt: string, durationMs: number, cases: CaseReport[]): RunReport {
+  const usage = emptyUsage();
+  for (const c of cases) {
+    usage.turns += c.usage.turns;
+    usage.inputTokens += c.usage.inputTokens;
+    usage.cachedTokens += c.usage.cachedTokens;
+    usage.outputTokens += c.usage.outputTokens;
+    usage.reasoningTokens += c.usage.reasoningTokens;
+  }
+  return {
+    agentKey,
+    startedAt,
+    durationMs,
+    passed: cases.filter((c) => c.passed).length,
+    total: cases.length,
+    usage,
+    cases,
+  };
+}
+
+const n = (value: number) => value.toLocaleString('en-US');
+
+function usageLine(usage: Usage, durationMs: number): string {
+  const turns = `${usage.turns} turn${usage.turns === 1 ? '' : 's'}`;
+  const seconds = `${(durationMs / 1000).toFixed(1)} s`;
+  return `${turns} · ${seconds} · ${n(usage.inputTokens)} in (${n(usage.cachedTokens)} cached) · ${n(usage.outputTokens)} out (${n(usage.reasoningTokens)} reasoning)`;
 }
 
 /** One screen of results: a line per case, detail only where something went wrong. */
@@ -64,6 +151,7 @@ export function formatReport(reports: CaseReport[]): string {
   for (const c of reports) {
     lines.push(`${c.errored ? '!' : c.passed ? '✓' : '✗'} ${c.name} — ${c.why}`);
     if (c.errored) lines.push(`  ERROR ${c.errored}`);
+    lines.push(`    ${usageLine(c.usage, c.durationMs)}`);
     c.turns.forEach((t, i) => {
       const noisy = t.verdict.failures.length > 0 || t.verdict.warnings.length > 0;
       if (!noisy) return;
@@ -80,7 +168,9 @@ export function formatReport(reports: CaseReport[]): string {
     });
   }
   const passed = reports.filter((r) => r.passed).length;
+  const total = summarise('', '', reports.reduce((ms, r) => ms + r.durationMs, 0), reports);
   lines.push('');
   lines.push(`${passed}/${reports.length} cases passed`);
+  lines.push(`Totals: ${usageLine(total.usage, total.durationMs)}`);
   return lines.join('\n');
 }
