@@ -93,6 +93,11 @@ describe('extractPrices', () => {
     expect(extractPrices('a bargain at 90,000')).toEqual([90_000]);
   });
 
+  it('sees a threshold word through markdown emphasis around the number', () => {
+    expect(extractPrices('giving you more choice under **1 lakh**, but often at smaller sizes.')).toEqual([]);
+    expect(extractPrices('the entry point here is **PKR 1.25 lakh** for 1,269 sq ft')).toEqual([125_000]);
+  });
+
   it('treats other count nouns the same way as sizes and bedrooms', () => {
     expect(extractPrices('at 3 thousand people')).toEqual([]);
     expect(extractPrices('at 5 thousand feet')).toEqual([]);

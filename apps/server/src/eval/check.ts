@@ -64,9 +64,12 @@ function toNumber(raw: string): number {
  * they are bedrooms, floors and years far more often than rupees.
  */
 export function extractPrices(text: string): number[] {
+  // Strip markdown emphasis so a threshold word ('under', 'at most') is not
+  // hidden by **number** from the look-back — the agent bolds prices often.
   // One dash style, then spread a range's trailing unit onto a unit-less
   // first number — but only a small one; `75,000–1.65 lakh` mixes forms.
   const normalised = text
+    .replace(/[*_]+/g, '')
     .replace(/[–—]/g, '-')
     .replace(
       // The lookbehind keeps the digits after a comma (`75,000`) from being
