@@ -91,7 +91,8 @@ export function parseSetupArgs(argv: string[], env: Record<string, string | unde
   if (opts.agentKey !== PRODUCTION_AGENT_KEY && !opts.keepTool) {
     throw new Error(
       `agent key "${opts.agentKey}" is not the production agent; pass --keep-tool so the ` +
-        'production search tool is reused rather than replaced out from under it',
+        'production search tool is reused rather than replaced out from under it ' +
+        '(or unset VECTARA_AGENT_KEY if you meant production)',
     );
   }
 
@@ -131,6 +132,20 @@ export function agentsReferencingTool(agents: AgentToolRefs[], toolId: string, o
   return agents
     .filter((agent) => agent.key !== ownKey)
     .filter((agent) => Object.values(agent.tool_configurations ?? {}).some((tool) => tool.tool_id === toolId))
+    .map((agent) => agent.key)
+    .sort();
+}
+
+/**
+ * Keys of every agent other than `ownKey` whose listing carries no
+ * `tool_configurations` at all. The guard cannot tell "references nothing"
+ * from "the listing said nothing", so it treats the second as a refusal
+ * rather than a pass.
+ */
+export function agentsWithoutToolInfo(agents: AgentToolRefs[], ownKey: string): string[] {
+  return agents
+    .filter((agent) => agent.key !== ownKey)
+    .filter((agent) => agent.tool_configurations === undefined)
     .map((agent) => agent.key)
     .sort();
 }

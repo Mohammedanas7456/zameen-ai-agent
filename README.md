@@ -132,7 +132,7 @@ A non-zero exit means at least one case failed; the report names the turn, the f
 
 A green run means every price and area the agent stated was in the eight listings it was shown and every search carried the expected filters. It does not prove each described listing exists as described, and it is one sample of a stochastic model — run it twice before trusting a red or a green.
 
-Each run leaves ten `eval-*` sessions on the agent, which expire after seven idle days like any other; the `turn_usage` lines interleaved with the report are the server's ordinary per-turn token log, not part of the grading.
+Each run leaves ten `eval-*` sessions on the agent, which expire after seven idle days like any other. The server's per-turn `turn_usage` log lines are folded into each case's usage line and the run totals rather than printed; they are not part of the grading. With `--json` the file is now a run object — `agentKey`, `startedAt`, `durationMs`, `passed`, `total`, `usage`, `cases` — rather than the bare array of cases earlier versions wrote.
 
 ## Comparing models
 
@@ -146,6 +146,8 @@ VECTARA_AGENT_KEY=zameen_eval_gpt5mini npm run eval -- --json eval-gpt5mini.json
 `--reasoning-effort none|minimal|low|medium|high` sets the Responses API's reasoning effort; `--max-tokens` is the output cap, which on that API includes reasoning tokens (production runs 1500). The eval's report ends with a totals line — turns, seconds, input tokens (and how many were cached), output tokens (and how many were reasoning) — and the JSON records `agentKey`, so runs are comparable. Run each candidate at least twice; one run of a stochastic model is one sample.
 
 `GET /v2/llms` on your Vectara account lists the models you can name. To trial Claude, register it once as a customer LLM (`POST /v2/llms` with `type: "anthropic"`, a name, the model id, and your Anthropic key), then pass that name as `--model`. The measured comparison for this repo lives in `docs/eval/`.
+
+Candidates cost nothing idle and can stay for re-runs, but while any of them exists a plain `npm run setup:agent` (which replaces the search tool) refuses, naming them: pass `--keep-tool` to update the production agent without touching the tool, or delete the candidates first with `DELETE /v2/agents/<key>`.
 
 ## Limits and recovery
 
