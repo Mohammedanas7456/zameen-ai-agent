@@ -114,3 +114,23 @@ export function agentName(opts: SetupOptions): string {
     ? PRODUCTION_AGENT_NAME
     : `${PRODUCTION_AGENT_NAME} [${opts.agentKey}]`;
 }
+
+/** The shape of an agent in `GET /agents`, reduced to what the guard reads. */
+export interface AgentToolRefs {
+  key: string;
+  tool_configurations?: Record<string, { tool_id?: string | null }>;
+}
+
+/**
+ * Keys of every agent other than `ownKey` that still references `toolId`.
+ * Vectara refuses to delete a tool an agent references, so replacing the
+ * production tool while a model-trial candidate shares it would strand
+ * production without a tool halfway through.
+ */
+export function agentsReferencingTool(agents: AgentToolRefs[], toolId: string, ownKey: string): string[] {
+  return agents
+    .filter((agent) => agent.key !== ownKey)
+    .filter((agent) => Object.values(agent.tool_configurations ?? {}).some((tool) => tool.tool_id === toolId))
+    .map((agent) => agent.key)
+    .sort();
+}

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { agentName, modelBlock, parseSetupArgs, PRODUCTION_AGENT_KEY } from './setup-args.js';
+import {
+  agentName,
+  agentsReferencingTool,
+  modelBlock,
+  parseSetupArgs,
+  PRODUCTION_AGENT_KEY,
+  type AgentToolRefs,
+} from './setup-args.js';
 
 describe('parseSetupArgs', () => {
   it('defaults to the production agent on gpt-5.5 with a 1500-token cap', () => {
@@ -72,5 +79,30 @@ describe('agentName', () => {
     expect(agentName(parseSetupArgs(['--keep-tool', '--agent-key', 'zameen_eval_gpt54'], {}))).toBe(
       'Zameen Property Assistant [zameen_eval_gpt54]',
     );
+  });
+});
+
+describe('agentsReferencingTool', () => {
+  // Annotated so TS contextually types each element against AgentToolRefs's
+  // index signature, rather than inferring a per-element union that a bare
+  // literal array would produce (and that union then fails that check).
+  const agents: AgentToolRefs[] = [
+    { key: 'zameen_property_assistant', tool_configurations: { search_properties: { tool_id: 'tol_1' } } },
+    { key: 'zameen_eval_gpt54', tool_configurations: { search_properties: { tool_id: 'tol_1' } } },
+    { key: 'zameen_eval_gpt5mini', tool_configurations: { search_properties: { tool_id: 'tol_1' } } },
+    { key: 'other_agent', tool_configurations: { web: { tool_id: null }, docs: { tool_id: 'tol_9' } } },
+    { key: 'bare_agent' },
+  ];
+
+  it('names every other agent that references the tool, sorted', () => {
+    expect(agentsReferencingTool(agents, 'tol_1', 'zameen_property_assistant')).toEqual([
+      'zameen_eval_gpt54',
+      'zameen_eval_gpt5mini',
+    ]);
+  });
+
+  it('is empty when only the agent itself references the tool', () => {
+    expect(agentsReferencingTool(agents, 'tol_9', 'other_agent')).toEqual([]);
+    expect(agentsReferencingTool(agents, 'tol_missing', 'zameen_property_assistant')).toEqual([]);
   });
 });

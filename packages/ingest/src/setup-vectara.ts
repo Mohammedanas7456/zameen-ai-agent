@@ -17,7 +17,14 @@ import { fileURLToPath } from 'node:url';
 import type { Facets, Listing } from '@zameen/shared';
 import { clientFromEnv, VectaraError, type VectaraClient } from './vectara.js';
 import { toDocument, FILTER_ATTRIBUTES } from './document.js';
-import { agentName, modelBlock, parseSetupArgs, type SetupOptions } from './setup-args.js';
+import {
+  agentName,
+  agentsReferencingTool,
+  modelBlock,
+  parseSetupArgs,
+  type AgentToolRefs,
+  type SetupOptions,
+} from './setup-args.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -175,6 +182,23 @@ async function findSearchTools(client: VectaraClient): Promise<ToolSummary[]> {
   return found;
 }
 
+/** Every agent in the account, paged like the tool list. */
+async function listAgents(client: VectaraClient): Promise<AgentToolRefs[]> {
+  let pageKey: string | undefined;
+  const found: AgentToolRefs[] = [];
+  do {
+    const query = new URLSearchParams({ limit: '100', ...(pageKey ? { page_key: pageKey } : {}) });
+    const { data } = await client.request<{
+      agents?: AgentToolRefs[];
+      metadata?: { page_key?: string };
+    }>('GET', `/agents?${query}`);
+
+    found.push(...(data.agents ?? []));
+    pageKey = data.metadata?.page_key || undefined;
+  } while (pageKey);
+  return found;
+}
+
 /**
  * The agent's full definition. With `searchToolId` null it is built without
  * the search tool, which is how the tool is freed for replacement.
@@ -273,6 +297,23 @@ async function ensureSearchTool(client: VectaraClient, listings: Listing[], face
   console.log(`\n[3/4] Tool "${SEARCH_TOOL_NAME}"`);
 
   const existing = await findSearchTools(client);
+
+  // Vectara refuses to delete a tool another agent references, so with a
+  // model-trial candidate sharing this one the detach below would strand
+  // production without a tool. Check before touching anything.
+  if (existing.length > 0) {
+    const agents = await listAgents(client);
+    for (const tool of existing) {
+      const others = agentsReferencingTool(agents, tool.id, AGENT_KEY);
+      if (others.length > 0) {
+        throw new Error(
+          `tool ${tool.id} is also used by ${others.join(', ')} — re-run with --keep-tool to reuse it, ` +
+            'or delete those agents first',
+        );
+      }
+    }
+  }
+
   if (existing.length > 0) {
     await putAgent(client, await agentConfig(listings, facets, null));
     console.log('      detached from the agent');
