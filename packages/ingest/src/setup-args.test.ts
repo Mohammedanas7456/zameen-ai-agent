@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { modelBlock, parseSetupArgs, PRODUCTION_AGENT_KEY } from './setup-args.js';
+import { agentName, modelBlock, parseSetupArgs, PRODUCTION_AGENT_KEY } from './setup-args.js';
 
 describe('parseSetupArgs', () => {
   it('defaults to the production agent on gpt-5.5 with a 1500-token cap', () => {
@@ -50,14 +50,27 @@ describe('parseSetupArgs', () => {
 });
 
 describe('modelBlock', () => {
-  it('omits reasoning_effort unless asked', () => {
+  it('omits reasoning unless asked', () => {
     expect(modelBlock(parseSetupArgs([], {}))).toEqual({ name: 'gpt-5.5', parameters: { max_tokens: 1500 } });
+    expect(modelBlock(parseSetupArgs([], {})).parameters).not.toHaveProperty('reasoning');
   });
 
-  it('passes reasoning_effort through', () => {
+  it('sends reasoning effort in the Responses API shape', () => {
     expect(modelBlock(parseSetupArgs(['--model', 'gpt-5.4', '--max-tokens', '4000', '--reasoning-effort', 'low'], {}))).toEqual({
       name: 'gpt-5.4',
-      parameters: { max_tokens: 4000, reasoning_effort: 'low' },
+      parameters: { max_tokens: 4000, reasoning: { effort: 'low' } },
     });
+  });
+});
+
+describe('agentName', () => {
+  it('keeps the production name for the production key', () => {
+    expect(agentName(parseSetupArgs([], {}))).toBe('Zameen Property Assistant');
+  });
+
+  it('suffixes a candidate with its key, because names are unique per account', () => {
+    expect(agentName(parseSetupArgs(['--keep-tool', '--agent-key', 'zameen_eval_gpt54'], {}))).toBe(
+      'Zameen Property Assistant [zameen_eval_gpt54]',
+    );
   });
 });

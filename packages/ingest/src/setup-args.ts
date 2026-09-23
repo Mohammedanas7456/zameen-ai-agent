@@ -8,6 +8,7 @@
  */
 
 export const PRODUCTION_AGENT_KEY = 'zameen_property_assistant';
+export const PRODUCTION_AGENT_NAME = 'Zameen Property Assistant';
 
 export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high'] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
@@ -100,6 +101,16 @@ export function parseSetupArgs(argv: string[], env: Record<string, string | unde
 /** The agent definition's `model` block. */
 export function modelBlock(opts: SetupOptions): { name: string; parameters: Record<string, unknown> } {
   const parameters: Record<string, unknown> = { max_tokens: opts.maxTokens };
-  if (opts.reasoningEffort) parameters['reasoning_effort'] = opts.reasoningEffort;
+  // Vectara forwards these verbatim to the model's API. On OpenAI's Responses
+  // API the effort knob is the nested `reasoning.effort`; the flat
+  // `reasoning_effort` of the older API is rejected outright.
+  if (opts.reasoningEffort) parameters['reasoning'] = { effort: opts.reasoningEffort };
   return { name: opts.model, parameters };
+}
+
+/** Agent names are unique per account, so a candidate carries its key. */
+export function agentName(opts: SetupOptions): string {
+  return opts.agentKey === PRODUCTION_AGENT_KEY
+    ? PRODUCTION_AGENT_NAME
+    : `${PRODUCTION_AGENT_NAME} [${opts.agentKey}]`;
 }

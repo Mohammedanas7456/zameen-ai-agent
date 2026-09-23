@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import type { Facets, Listing } from '@zameen/shared';
 import { clientFromEnv, VectaraError, type VectaraClient } from './vectara.js';
 import { toDocument, FILTER_ATTRIBUTES } from './document.js';
-import { modelBlock, parseSetupArgs, type SetupOptions } from './setup-args.js';
+import { agentName, modelBlock, parseSetupArgs, type SetupOptions } from './setup-args.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -194,7 +194,7 @@ async function agentConfig(
 
   return {
     key: AGENT_KEY,
-    name: 'Zameen Property Assistant',
+    name: agentName(OPTIONS),
     description: 'Conversational property search over Zameen.com Karachi listings.',
     model: modelBlock(OPTIONS),
     first_step_name: 'main',
